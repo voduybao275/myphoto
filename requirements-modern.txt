@@ -1,0 +1,8 @@
+# Bộ thư viện cho Windows 10 1607+/Windows 11 với Python 3.11+.
+# Code tự nhận PySide6 khi có; dùng file này thay cho requirements.txt.
+PySide6>=6.8,<7
+numpy>=2.0,<3
+Pillow>=10.0,<13
+
+# Chỉ cần khi chạy kiểm thử
+pytest>=8.0

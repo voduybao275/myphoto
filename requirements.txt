@@ -1,0 +1,8 @@
+# Bộ thư viện cho máy Windows 10 build 10240 (bản cài hiện tại).
+# PySide2/Qt 5.15 chạy native trên build này; Qt 6 không nạp được plugin nền tảng.
+PySide2==5.15.2.1
+numpy>=1.26,<2
+Pillow>=10.0,<13
+
+# Chỉ cần khi chạy kiểm thử (không bắt buộc để dùng ứng dụng)
+pytest>=8.0

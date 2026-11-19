@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv*/
+venv/
+env/
+
+# Dữ liệu cục bộ / tệp sinh ra khi chạy
+artifacts/settings_preview.json
+*.sqlite3
+*.mps
+*.log
+
+# Hệ điều hành / trình soạn thảo
+.DS_Store
+Thumbs.db
