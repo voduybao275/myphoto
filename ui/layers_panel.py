@@ -40,12 +40,26 @@ ROLE_MASK_ENABLED = ROLE_LAYER_ID + 5
 ROLE_KIND = ROLE_LAYER_ID + 6
 ROLE_DEPTH = ROLE_LAYER_ID + 7
 ROLE_LOCKED = ROLE_LAYER_ID + 8
+ROLE_CLIPPING = ROLE_LAYER_ID + 9
+ROLE_COLOR_LABEL = ROLE_LAYER_ID + 10
+
+LAYER_COLOR_SWATCHES = {
+    "red": "#e5534b",
+    "orange": "#e8833a",
+    "yellow": "#d9b53a",
+    "green": "#59a85c",
+    "blue": "#3b82c4",
+    "violet": "#8f63c9",
+    "gray": "#808080",
+}
 
 ROW_HEIGHT = 48
 THUMB_SIZE = 36
 MASK_SIZE = 28
 EYE_ZONE_WIDTH = 28
 INDENT_STEP = 14
+CLIP_INDENT = 16
+CLIP_ICON_SIZE = 12
 
 
 class LayerItemDelegate(QStyledItemDelegate):
@@ -70,6 +84,16 @@ class LayerItemDelegate(QStyledItemDelegate):
         painter.setBrush(background)
         painter.drawRoundedRect(rect, 5, 5)
 
+        color_label = str(index.data(ROLE_COLOR_LABEL) or "none")
+        swatch = LAYER_COLOR_SWATCHES.get(color_label)
+        if swatch:
+            painter.setBrush(QColor(swatch))
+            painter.drawRoundedRect(
+                QRect(rect.right() - 5, rect.y() + 7, 4, rect.height() - 14),
+                2,
+                2,
+            )
+
         visible = bool(index.data(ROLE_VISIBLE))
         eye_color = QColor(theme.icon if visible else theme.text_disabled)
         eye_pixmap = icons.pixmap("eye" if visible else "eye_off", 16, eye_color)
@@ -86,7 +110,20 @@ class LayerItemDelegate(QStyledItemDelegate):
             )
 
         thumb = index.data(ROLE_THUMB)
-        thumb_x = rect.x() + 30 + indent
+        clipping = bool(index.data(ROLE_CLIPPING))
+        clip_indent = CLIP_INDENT if clipping else 0
+        thumb_x = rect.x() + 30 + indent + clip_indent
+        if clipping:
+            clip_pixmap = icons.pixmap(
+                "clipping", CLIP_ICON_SIZE, QColor(theme.accent)
+            )
+            painter.drawPixmap(
+                QPoint(
+                    thumb_x - CLIP_ICON_SIZE - 2,
+                    rect.y() + (rect.height() - CLIP_ICON_SIZE) // 2,
+                ),
+                clip_pixmap,
+            )
         thumb_y = rect.y() + (rect.height() - THUMB_SIZE) // 2
         thumb_rect = QRect(thumb_x, thumb_y, THUMB_SIZE, THUMB_SIZE)
         if isinstance(thumb, QPixmap):
@@ -162,6 +199,7 @@ class LayerListWidget(QListWidget):
     fill_requested = Signal(str)
     smart_requested = Signal(str)
     order_changed = Signal(list)
+    context_requested = Signal(str, QPoint)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -177,6 +215,8 @@ class LayerListWidget(QListWidget):
         self.setWordWrap(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         self._updating = False
         self.currentItemChanged.connect(self._on_current_item_changed)
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -201,6 +241,16 @@ class LayerListWidget(QListWidget):
         after = [self._layer_id(index) for index in range(self.count())]
         if after != before and all(after):
             QTimer.singleShot(0, lambda ids=list(after): self.order_changed.emit(ids))
+
+    def _on_context_menu(self, position: QPoint) -> None:
+        item = self.itemAt(position)
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        self.context_requested.emit(
+            str(item.data(ROLE_LAYER_ID)),
+            self.viewport().mapToGlobal(position),
+        )
 
     def _on_current_item_changed(self, current: QListWidgetItem | None, _previous) -> None:
         if self._updating or current is None:
@@ -227,6 +277,7 @@ class LayersPanel(QWidget):
     adjustment_edit_requested = Signal(str)
     fill_edit_requested = Signal(str)
     smart_edit_requested = Signal(str)
+    context_requested = Signal(str, QPoint)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -304,6 +355,7 @@ class LayersPanel(QWidget):
         self.layer_list.fill_requested.connect(self.fill_edit_requested)
         self.layer_list.smart_requested.connect(self.smart_edit_requested)
         self.layer_list.order_changed.connect(self._on_order_changed)
+        self.layer_list.context_requested.connect(self.context_requested.emit)
         layout.addWidget(self.layer_list, 1)
 
         self._set_controls_enabled(False)
@@ -380,6 +432,8 @@ class LayersPanel(QWidget):
         item.setData(ROLE_KIND, layer.kind)
         item.setData(ROLE_VISIBLE, layer.visible)
         item.setData(ROLE_LOCKED, layer.locked)
+        item.setData(ROLE_CLIPPING, layer.clipping)
+        item.setData(ROLE_COLOR_LABEL, layer.color_label)
         item.setData(ROLE_DEPTH, depth)
         item.setData(ROLE_THUMB, self._thumbnail(layer))
         item.setData(ROLE_SUBTITLE, self._subtitle(layer))
@@ -422,6 +476,11 @@ class LayersPanel(QWidget):
             )
         if layer.text is not None:
             tooltip += f"\nVăn bản: {layer.text.text.replace(chr(10), ' ')[:60]}"
+        if layer.clipping:
+            tooltip += (
+                "\nClipping Mask: chỉ hiện trong vùng nội dung của layer nền "
+                "nằm bên dưới (Ctrl+Alt+G để giải phóng)."
+            )
         item.setToolTip(tooltip)
         return item
 
@@ -475,6 +534,8 @@ class LayersPanel(QWidget):
                 continue
             item.setData(ROLE_VISIBLE, layer.visible)
             item.setData(ROLE_LOCKED, layer.locked)
+            item.setData(ROLE_CLIPPING, layer.clipping)
+            item.setData(ROLE_COLOR_LABEL, layer.color_label)
             item.setData(ROLE_THUMB, self._thumbnail(layer))
             item.setData(ROLE_SUBTITLE, self._subtitle(layer))
             item.setData(ROLE_MASK_THUMB, self._mask_thumbnail(layer))
@@ -623,6 +684,8 @@ class LayersPanel(QWidget):
             parts.append(SHAPE_LABELS.get(layer.shape.kind, "Hình khối"))
         if layer.mask is not None:
             parts.append("Mask" if layer.mask_enabled else "Mask tắt")
+        if layer.clipping:
+            parts.append("Clipping")
         if layer.blend_mode != "normal" and layer.kind != LayerKind.ADJUSTMENT:
             parts.append(BLEND_MODE_LABELS.get(layer.blend_mode, "Normal"))
         if layer.opacity < 0.999:

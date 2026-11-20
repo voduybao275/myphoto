@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from core.canvas import composite_layers, downsample_rgba
-from core.layer import BLEND_MODE_IDS, Layer
+from core.layer import BLEND_MODE_IDS, Layer, LayerKind
 
 
 def make_layer(width, height, rgba, *, offset=(0, 0), opacity=1.0, mode="normal"):
@@ -119,3 +119,82 @@ def test_downsample_rgba_bounds():
 def test_invalid_canvas_size():
     with pytest.raises(ValueError):
         composite_layers([], 0, 5)
+
+
+def test_clipping_mask_uses_base_alpha():
+    base = make_layer(4, 4, (255, 0, 0, 255))
+    base.pixels[2:, :, 3] = 0
+    clipped = make_layer(4, 4, (0, 0, 255, 255))
+    clipped.clipping = True
+    result = composite_layers([base, clipped], 4, 4)
+    assert np.all(result[:2, :, :3] == (0, 0, 255))
+    assert np.all(result[:2, :, 3] == 255)
+    assert np.all(result[2:, :, 3] == 0)
+
+
+def test_clipped_layer_does_not_show_over_lower_layer():
+    lower = make_layer(4, 4, (0, 255, 0, 255))
+    base = make_layer(4, 4, (255, 0, 0, 255))
+    base.pixels[2:, :, 3] = 0
+    clipped = make_layer(4, 4, (0, 0, 255, 255))
+    clipped.clipping = True
+    result = composite_layers([lower, base, clipped], 4, 4)
+    assert np.all(result[:2, :, :3] == (0, 0, 255))
+    assert np.all(result[2:, :, :3] == (0, 255, 0))
+    assert np.all(result[..., 3] == 255)
+
+
+def test_clipping_mask_respects_base_offset():
+    base = make_layer(2, 2, (255, 0, 0, 255), offset=(1, 1))
+    clipped = make_layer(4, 4, (0, 0, 255, 255))
+    clipped.clipping = True
+    result = composite_layers([base, clipped], 4, 4)
+    assert np.all(result[1:3, 1:3, :3] == (0, 0, 255))
+    mask = np.ones((4, 4), dtype=bool)
+    mask[1:3, 1:3] = False
+    assert np.all(result[mask, 3] == 0)
+
+
+def test_clipping_mask_respects_base_layer_mask():
+    base = make_layer(4, 4, (255, 255, 255, 255))
+    mask = np.full((4, 4), 255, dtype=np.uint8)
+    mask[0, :] = 0
+    base.set_mask(mask)
+    clipped = make_layer(4, 4, (255, 0, 0, 255))
+    clipped.clipping = True
+    result = composite_layers([base, clipped], 4, 4)
+    assert np.all(result[0, :, 3] == 0)
+    assert np.all(result[1:, :, :3] == (255, 0, 0))
+
+
+def test_layer_can_clip_to_group_alpha():
+    group = Layer(1, 1, "Group")
+    group.kind = LayerKind.GROUP
+    child = make_layer(2, 2, (255, 0, 0, 255))
+    child.group_id = group.id
+    clipped = make_layer(4, 4, (0, 0, 255, 255))
+    clipped.clipping = True
+    result = composite_layers([group, child, clipped], 4, 4)
+    assert np.all(result[:2, :2, :3] == (0, 0, 255))
+    assert np.all(result[2:, :, 3] == 0)
+    assert np.all(result[:, 2:, 3] == 0)
+
+
+def test_clipped_layers_share_the_same_base():
+    base = make_layer(4, 4, (255, 0, 0, 255))
+    base.pixels[2:, :, 3] = 0
+    first = make_layer(4, 4, (0, 0, 255, 255))
+    first.clipping = True
+    second = make_layer(4, 4, (0, 255, 0, 255))
+    second.clipping = True
+    result = composite_layers([base, first, second], 4, 4)
+    assert np.all(result[:2, :, :3] == (0, 255, 0))
+    assert np.all(result[2:, :, 3] == 0)
+
+
+def test_clipping_flag_without_base_is_ignored():
+    layer = make_layer(2, 2, (10, 20, 30, 255))
+    layer.clipping = True
+    result = composite_layers([layer], 2, 2)
+    assert np.all(result[..., :3] == (10, 20, 30))
+    assert np.all(result[..., 3] == 255)

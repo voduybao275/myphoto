@@ -24,13 +24,13 @@ from config.settings import APP_VERSION, PROJECT_EXTENSION
 from core.adjustment_layer import AdjustmentProperties
 from core.document import Document
 from core.fill_layer import FillProperties
-from core.layer import BLEND_MODE_IDS, Layer, LayerKind
+from core.layer import BLEND_MODE_IDS, LAYER_COLOR_IDS, Layer, LayerKind
 from core.shape_layer import ShapeProperties
 from core.smart_object import SmartObjectProperties, validate_source
 from core.text_layer import TextProperties
 
 FORMAT_ID = "myphoto-project"
-FORMAT_VERSION = 6
+FORMAT_VERSION = 9
 
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 _MAX_LAYER_BYTES = 512 * 1024 * 1024
@@ -83,6 +83,8 @@ def save_project(document: Document, path: str | Path) -> Path:
                     "kind": layer.kind,
                     "visible": layer.visible,
                     "locked": bool(layer.locked),
+                    "clipping": bool(layer.clipping),
+                    "color_label": layer.color_label,
                     "opacity": layer.opacity,
                     "blend_mode": layer.blend_mode,
                     "offset_x": layer.offset_x,
@@ -182,6 +184,20 @@ def _validate_groups(document: Document) -> None:
                     f"Nhóm '{current.name}' có nhóm cha không hợp lệ."
                 )
             current = next_parent
+
+
+def _sanitize_clipping(document: Document) -> None:
+    """Bỏ cờ clipping ở layer không còn layer nền phía dưới trong cùng nhóm."""
+    group_ids = [
+        layer.id for layer in document.layers if layer.kind == LayerKind.GROUP
+    ]
+    for parent_id in [None, *group_ids]:
+        has_base = False
+        for layer in document.layers.children_of(parent_id):
+            if layer.clipping and not has_base:
+                layer.clipping = False
+            if not layer.clipping:
+                has_base = True
 
 
 def _load_smart_source(
@@ -387,6 +403,11 @@ def load_project(path: str | Path) -> Document:
                 layer.group_id = group_id or None
                 layer.visible = bool(entry.get("visible", True))
                 layer.locked = bool(entry.get("locked", False))
+                layer.clipping = bool(entry.get("clipping", False))
+                color_label = str(entry.get("color_label", "none"))
+                layer.color_label = (
+                    color_label if color_label in LAYER_COLOR_IDS else "none"
+                )
                 try:
                     layer.opacity = max(0.0, min(1.0, float(entry.get("opacity", 1.0))))
                 except (TypeError, ValueError):
@@ -439,6 +460,7 @@ def load_project(path: str | Path) -> Document:
                 )
 
             _validate_groups(document)
+            _sanitize_clipping(document)
 
             active_layer_id = document_info.get("active_layer")
             active = document.layers.get(str(active_layer_id)) if active_layer_id else None

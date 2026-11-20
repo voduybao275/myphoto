@@ -33,6 +33,7 @@ def build_document():
     accent.offset_y = 3
     accent.opacity = 0.65
     accent.blend_mode = "multiply"
+    accent.color_label = "blue"
     accent.visible = True
     mask = np.zeros((accent.height, accent.width), dtype=np.uint8)
     mask[2:6, 2:8] = 255
@@ -72,6 +73,8 @@ def test_roundtrip_preserves_layers_and_properties(tmp_path):
     assert (accent.offset_x, accent.offset_y) == (4, 3)
     assert accent.opacity == pytest.approx(0.65, abs=1e-6)
     assert accent.blend_mode == "multiply"
+    assert accent.color_label == "blue"
+    assert background.color_label == "none"
     assert accent.mask is not None
     expected_mask = np.zeros((9, 12), dtype=np.uint8)
     expected_mask[2:6, 2:8] = 255
@@ -93,8 +96,10 @@ def test_saved_archive_contains_manifest(tmp_path):
         assert "manifest.json" in names
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
     assert manifest["format"] == "myphoto-project"
-    assert manifest["version"] == 6
+    assert manifest["version"] == 9
     assert len(manifest["layers"]) == 3
+    entries = {entry["name"]: entry for entry in manifest["layers"]}
+    assert entries["Accent"]["color_label"] == "blue"
     for entry in manifest["layers"]:
         assert entry["file"].startswith("layers/")
         assert entry["file"] in names
@@ -270,7 +275,7 @@ def test_text_layer_roundtrip(tmp_path):
     target = save_project(document, tmp_path / "van-ban.mps")
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 6
+    assert manifest["version"] == 9
     entry = manifest["layers"][-1]
     assert entry["kind"] == "text"
     assert entry["text"] == properties.to_dict()
@@ -474,7 +479,7 @@ def test_shape_layer_roundtrip(tmp_path):
     target = save_project(document, tmp_path / "hinh-khoi.mps")
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 6
+    assert manifest["version"] == 9
     entry = manifest["layers"][-1]
     assert entry["kind"] == "shape"
     assert entry["shape"] == properties.to_dict()
@@ -570,3 +575,39 @@ def test_shape_size_mismatch_is_rejected(tmp_path):
         archive.writestr("layers/a.png", _png_bytes(pixels))
     with pytest.raises(ProjectFormatError, match="Kích thước hình khối"):
         load_project(target)
+
+
+def test_clipping_mask_roundtrip(tmp_path):
+    document = Document(6, 4, name="Clipping")
+    base = document.add_layer(name="Base", color=(255, 0, 0, 255), record=False)
+    base.pixels[2:, :, 3] = 0
+    upper = document.add_layer(name="Clip", color=(0, 0, 255, 255), record=False)
+    document.set_layer_clipping(upper, True)
+    expected = document.get_composite().array.copy()
+    document.mark_clean()
+
+    target = save_project(document, tmp_path / "clipping.mps")
+    with zipfile.ZipFile(target) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    assert manifest["version"] == 9
+    entries = {entry["name"]: entry for entry in manifest["layers"]}
+    assert entries["Clip"]["clipping"] is True
+    assert entries["Base"]["clipping"] is False
+
+    loaded = load_project(target)
+    by_name = {layer.name: layer for layer in loaded.layers}
+    assert by_name["Clip"].clipping
+    assert not by_name["Base"].clipping
+    assert np.array_equal(loaded.get_composite().array, expected)
+
+
+def test_clipping_without_base_is_cleared_on_load(tmp_path):
+    document = Document(4, 4, name="Clip lỗi")
+    layer = document.add_layer(name="Solo", color=(10, 20, 30, 255), record=False)
+    layer.clipping = True
+    document.mark_clean()
+
+    target = save_project(document, tmp_path / "clipping-solo.mps")
+    loaded = load_project(target)
+    assert not loaded.layers[0].clipping
+    assert np.all(loaded.get_composite().array[..., 3] == 255)

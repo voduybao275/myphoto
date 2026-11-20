@@ -282,6 +282,71 @@ def _draw_folder(painter: QPainter, color: QColor) -> None:
     painter.drawLine(QPointF(3.2, 11.0), QPointF(20.8, 11.0))
 
 
+def _draw_clipping(painter: QPainter, color: QColor) -> None:
+    """Mũi tên gập xuống layer nền, giống ký hiệu clipping của Photoshop."""
+    painter.setPen(_pen(color, 1.8))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    path.moveTo(6.4, 4.2)
+    path.lineTo(6.4, 13.2)
+    path.lineTo(17.4, 13.2)
+    path.lineTo(17.4, 16.4)
+    painter.drawPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(
+        QPolygonF([QPointF(17.4, 20.6), QPointF(14.2, 16.0), QPointF(20.6, 16.0)])
+    )
+
+
+def _draw_link(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_pen(color, 1.5))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(QRectF(3.2, 8.2, 10.0, 7.6), 3.8, 3.8)
+    painter.drawRoundedRect(QRectF(10.8, 8.2, 10.0, 7.6), 3.8, 3.8)
+
+
+def _draw_flip_h(painter: QPainter, color: QColor) -> None:
+    pen = _pen(color, 1.4)
+    pen.setStyle(Qt.PenStyle.DashLine)
+    painter.setPen(pen)
+    painter.drawLine(QPointF(12.0, 3.4), QPointF(12.0, 20.6))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(
+        QPolygonF([QPointF(9.2, 6.0), QPointF(4.0, 12.0), QPointF(9.2, 18.0)])
+    )
+    painter.drawPolygon(
+        QPolygonF([QPointF(14.8, 6.0), QPointF(20.0, 12.0), QPointF(14.8, 18.0)])
+    )
+
+
+def _draw_flip_v(painter: QPainter, color: QColor) -> None:
+    pen = _pen(color, 1.4)
+    pen.setStyle(Qt.PenStyle.DashLine)
+    painter.setPen(pen)
+    painter.drawLine(QPointF(3.4, 12.0), QPointF(20.6, 12.0))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(
+        QPolygonF([QPointF(6.0, 9.2), QPointF(12.0, 4.0), QPointF(18.0, 9.2)])
+    )
+    painter.drawPolygon(
+        QPolygonF([QPointF(6.0, 14.8), QPointF(12.0, 20.0), QPointF(18.0, 14.8)])
+    )
+
+
+def _draw_reset(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_pen(color, 1.5))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawArc(QRectF(4.5, 4.5, 15.0, 15.0), 40 * 16, 280 * 16)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(
+        QPolygonF([QPointF(17.8, 3.4), QPointF(18.6, 9.2), QPointF(13.2, 7.0)])
+    )
+
+
 def _draw_close(painter: QPainter, color: QColor) -> None:
     painter.setPen(_pen(color, 1.8))
     painter.drawLine(QPointF(6.0, 6.0), QPointF(18.0, 18.0))
@@ -394,6 +459,11 @@ _DRAWERS: dict[str, Callable[[QPainter, QColor], None]] = {
     "layer_delete": _draw_layer_delete,
     "merge_down": _draw_merge_down,
     "folder": _draw_folder,
+    "clipping": _draw_clipping,
+    "link": _draw_link,
+    "flip_h": _draw_flip_h,
+    "flip_v": _draw_flip_v,
+    "reset": _draw_reset,
     "close": _draw_close,
     "swap": _draw_swap,
     "lock": lambda p, c: _draw_lock(p, c, open_=False),

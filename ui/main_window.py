@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
 
 import compat.qt  # noqa: F401  - chọn binding Qt trước mọi import PySide6
-from PySide6.QtCore import QByteArray, QPointF, Qt
+from PySide6.QtCore import QByteArray, QPoint, QPointF, Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QStackedWidget,
     QWidget,
@@ -40,12 +42,13 @@ from core.canvas import composite_layers, downsample_rgba, numpy_rgba_to_qimage,
 from core.color_manager import ColorManager
 from core.document import Document
 from core.fill_layer import FillProperties
-from core.layer import LayerKind
+from core.layer import LAYER_COLOR_LABELS, Layer, LayerKind
 from core.presets import PresetStore
 from core.shape_layer import ShapeProperties
 from core.smart_object import SmartObjectProperties
 from core.text_layer import TextProperties, TextRun
 from formats.export_manager import ExportError, export_image
+from formats.layer_code import layer_to_css, layer_to_svg, render_layer_rgba
 from formats.import_manager import (
     ImageImportError,
     load_image_document,
@@ -57,6 +60,7 @@ from ui.canvas_view import CanvasView
 from ui.dialogs import (
     AdjustmentLayerDialog,
     BatchDialog,
+    BlendingOptionsDialog,
     BrightnessContrastDialog,
     CanvasSizeDialog,
     FeatherDialog,
@@ -93,6 +97,8 @@ class MainWindow(QMainWindow):
         )
         self.color_manager = ColorManager(self)
         self._clipboard_payload: tuple[np.ndarray, tuple[int, int]] | None = None
+        self._shape_attributes: ShapeProperties | None = None
+        self._layer_context_menu: QMenu | None = None
         self._untitled_counter = 1
         self._document_connections: list[tuple[object, object]] = []
         self._current_view: CanvasView | None = None
@@ -172,11 +178,13 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.app_status)
         self.app_status.zoom_requested.connect(self._on_status_zoom_requested)
         self.layers_panel.message.connect(self._show_transient_message)
+        self.properties_panel.message.connect(self._show_transient_message)
         self.layers_panel.text_requested.connect(self._on_new_text_layer)
         self.layers_panel.shape_requested.connect(self._on_new_shape_layer)
         self.layers_panel.adjustment_edit_requested.connect(self._on_edit_adjustment)
         self.layers_panel.fill_edit_requested.connect(self._on_edit_fill)
         self.layers_panel.smart_edit_requested.connect(self._on_edit_smart_object)
+        self.layers_panel.context_requested.connect(self._on_layer_context_requested)
         self.options_bar.text_layer_requested.connect(self._on_new_text_layer)
         self.options_bar.shape_layer_requested.connect(self._on_new_shape_layer)
         self.options_bar.brush_state_changed.connect(self._update_action_states)
@@ -224,6 +232,29 @@ class MainWindow(QMainWindow):
         self.action_ungroup_layers = self._action(
             "Ungroup Layers", "Ctrl+Shift+G", self._on_ungroup_layers
         )
+        self.action_clipping_mask = self._action(
+            "Create Clipping Mask", "Ctrl+Alt+G", self._on_toggle_clipping_mask
+        )
+        self.action_blending_options = self._action(
+            "Blending Options…", "", self._on_blending_options
+        )
+        self.action_copy_css = self._action("Copy CSS", "", self._on_copy_css)
+        self.action_copy_svg = self._action("Copy SVG", "", self._on_copy_svg)
+        self.action_quick_export_png = self._action(
+            "Quick Export as PNG", "", self._on_quick_export_png
+        )
+        self.action_convert_smart = self._action(
+            "Convert to Smart Object", "", self._on_convert_smart_object
+        )
+        self.action_rasterize_layer = self._action(
+            "Rasterize Layer", "", self._on_rasterize_layer
+        )
+        self.action_copy_shape_attributes = self._action(
+            "Copy Shape Attributes", "", self._on_copy_shape_attributes
+        )
+        self.action_paste_shape_attributes = self._action(
+            "Paste Shape Attributes", "", self._on_paste_shape_attributes
+        )
         self.action_duplicate_layer = self._action(
             "Duplicate Layer", "Ctrl+J", self._on_duplicate_layer
         )
@@ -234,6 +265,9 @@ class MainWindow(QMainWindow):
             "Delete Layer", "Ctrl+Shift+Delete", self._on_delete_layer
         )
         self.action_merge_down = self._action("Merge Down", "Ctrl+E", self._on_merge_down)
+        self.action_merge_visible = self._action(
+            "Merge Visible", "", self._on_merge_visible
+        )
         self.action_flatten = self._action("Flatten Image", "Ctrl+Shift+E", self._on_flatten)
         self.action_add_mask = self._action("Add Layer Mask", "", self._on_add_layer_mask)
         self.action_remove_mask = self._action(
@@ -611,6 +645,56 @@ class MainWindow(QMainWindow):
         self.action_lock_layer.setText("Unlock Layer" if is_locked else "Lock Layer")
         self.action_group_layers.setEnabled(has_active)
         self.action_ungroup_layers.setEnabled(is_group)
+        is_clipped = bool(active is not None and active.clipping)
+        can_clip = False
+        if document is not None and active is not None and not is_clipped:
+            siblings = document.layers.children_of(active.group_id)
+            if active in siblings:
+                index = siblings.index(active)
+                base = next(
+                    (item for item in reversed(siblings[:index]) if not item.clipping),
+                    None,
+                )
+                can_clip = base is not None and base.kind != LayerKind.ADJUSTMENT
+        self.action_clipping_mask.setEnabled(has_active and (is_clipped or can_clip))
+        self.action_clipping_mask.setText(
+            "Release Clipping Mask" if is_clipped else "Create Clipping Mask"
+        )
+        kind = active.kind if active is not None else None
+        can_export_layer = kind in (
+            LayerKind.PIXEL,
+            LayerKind.TEXT,
+            LayerKind.SHAPE,
+            LayerKind.FILL,
+            LayerKind.SMART,
+        )
+        self.action_blending_options.setEnabled(has_active)
+        self.action_copy_css.setEnabled(has_active and can_export_layer)
+        self.action_copy_svg.setEnabled(has_active and can_export_layer)
+        self.action_quick_export_png.setEnabled(has_active and can_export_layer)
+        self.action_convert_smart.setEnabled(
+            has_active
+            and kind in (LayerKind.PIXEL, LayerKind.TEXT, LayerKind.SHAPE, LayerKind.FILL)
+        )
+        self.action_rasterize_layer.setEnabled(
+            has_active
+            and kind in (LayerKind.TEXT, LayerKind.SHAPE, LayerKind.FILL, LayerKind.SMART)
+        )
+        is_shape = bool(active is not None and kind == LayerKind.SHAPE)
+        self.action_copy_shape_attributes.setEnabled(is_shape)
+        self.action_paste_shape_attributes.setEnabled(
+            is_shape and self._shape_attributes is not None
+        )
+        visible_roots = (
+            [
+                layer
+                for layer in document.layers.children_of(None)
+                if layer.visible and layer.opacity > 0.0
+            ]
+            if document is not None
+            else []
+        )
+        self.action_merge_visible.setEnabled(len(visible_roots) >= 2)
         self.action_add_mask.setEnabled(
             has_active and (active is None or active.mask is None)
         )
@@ -1196,6 +1280,27 @@ class MainWindow(QMainWindow):
         if changed:
             self._show_transient_message("Đã bỏ nhóm (Ctrl+Z để hoàn tác).")
 
+    def _on_toggle_clipping_mask(self) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        release = layer.clipping
+        try:
+            changed = document.set_layer_clipping(layer, not release)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Không thể tạo Clipping Mask", str(exc))
+            return
+        if changed:
+            self._show_transient_message(
+                f"Đã giải phóng Clipping Mask của layer '{layer.name}'."
+                if release
+                else (
+                    f"Đã tạo Clipping Mask cho layer '{layer.name}' "
+                    "(Ctrl+Z để hoàn tác)."
+                )
+            )
+
     def _on_duplicate_layer(self) -> None:
         document = self.current_document
         if document is None or document.active_layer is None:
@@ -1248,6 +1353,300 @@ class MainWindow(QMainWindow):
             return
         if not document.flatten_image():
             self._show_transient_message("Tài liệu chưa có layer nào để flatten.")
+
+    def _on_merge_visible(self) -> None:
+        document = self.current_document
+        if document is None:
+            return
+        if document.merge_visible():
+            self._show_transient_message(
+                "Đã Merge Visible (Ctrl+Z để hoàn tác)."
+            )
+        else:
+            self._show_transient_message(
+                "Merge Visible cần ít nhất hai layer gốc đang hiện."
+            )
+
+    # --------------------------------------------------- menu ngữ cảnh layer
+    def _on_blending_options(self) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        dialog = BlendingOptionsDialog(
+            self,
+            layer.blend_mode,
+            layer.opacity,
+            allow_blend=layer.kind != LayerKind.ADJUSTMENT,
+        )
+        if exec_object(dialog) != QDialog.DialogCode.Accepted:
+            return
+        try:
+            changed = document.set_layer_blending(
+                layer, dialog.blend_mode, dialog.opacity
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Blending Options", str(exc))
+            return
+        if changed:
+            self._show_transient_message(
+                f"Đã cập nhật hoà trộn cho layer '{layer.name}'."
+            )
+
+    def _copy_layer_code(self, converter, label: str) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        try:
+            text = converter(layer, document.width, document.height)
+        except (ValueError, MemoryError) as exc:
+            QMessageBox.warning(self, f"Không thể copy {label}", str(exc))
+            return
+        QApplication.clipboard().setText(text)
+        self._show_transient_message(
+            f"Đã copy {label} của layer '{layer.name}' vào clipboard."
+        )
+
+    def _on_copy_css(self) -> None:
+        self._copy_layer_code(layer_to_css, "CSS")
+
+    def _on_copy_svg(self) -> None:
+        self._copy_layer_code(layer_to_svg, "SVG")
+
+    def _quick_export_directory(self, document: Document) -> Path:
+        if document.file_path:
+            return Path(document.file_path).parent
+        pictures = Path.home() / "Pictures"
+        if pictures.is_dir():
+            return pictures
+        fallback = self.settings.resolved_last_directory()
+        return Path(fallback) if fallback else Path.cwd()
+
+    def _quick_export_path(self, document: Document, layer: Layer) -> Path:
+        safe = re.sub(r'[<>:"/\\|?*]+', "-", layer.name).strip(" .") or "layer"
+        directory = self._quick_export_directory(document)
+        candidate = directory / f"{safe}-export.png"
+        counter = 2
+        while candidate.exists():
+            candidate = directory / f"{safe}-export-{counter}.png"
+            counter += 1
+        return candidate
+
+    def _on_quick_export_png(self) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        try:
+            pixels = render_layer_rgba(layer, document.width, document.height)
+            target = self._quick_export_path(document, layer)
+            export_image(target, pixels)
+        except (ValueError, ExportError, OSError, MemoryError) as exc:
+            QMessageBox.critical(self, "Không thể Quick Export", str(exc))
+            return
+        self._show_transient_message(f"Đã xuất PNG: {target}")
+
+    def _on_convert_smart_object(self) -> None:
+        document = self.current_document
+        if document is None:
+            return
+        try:
+            changed = document.convert_to_smart_object()
+        except (ValueError, MemoryError) as exc:
+            QMessageBox.warning(self, "Không thể chuyển Smart Object", str(exc))
+            return
+        if changed:
+            layer = document.active_layer
+            name = layer.name if layer is not None else ""
+            self._show_transient_message(
+                f"Đã chuyển layer '{name}' thành Smart Object "
+                "(Ctrl+Z để hoàn tác)."
+            )
+
+    def _on_rasterize_layer(self) -> None:
+        document = self.current_document
+        if document is None:
+            return
+        try:
+            changed = document.rasterize_layer()
+        except (ValueError, MemoryError) as exc:
+            QMessageBox.warning(self, "Không thể Rasterize Layer", str(exc))
+            return
+        if changed:
+            self._show_transient_message(
+                "Đã rasterize layer thành pixel (Ctrl+Z để hoàn tác)."
+            )
+
+    def _on_set_layer_color_label(self, color_label: str) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        try:
+            changed = document.set_layer_color_label(layer, color_label)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Nhãn màu layer", str(exc))
+            return
+        if changed:
+            label = dict(LAYER_COLOR_LABELS).get(color_label, color_label)
+            self._show_transient_message(
+                f"Đã đặt nhãn màu '{label}' cho layer '{layer.name}'."
+            )
+
+    def _on_copy_shape_attributes(self) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        if layer.kind != LayerKind.SHAPE or layer.shape is None:
+            self._show_transient_message("Hãy chọn một layer hình khối để copy thuộc tính.")
+            return
+        self._shape_attributes = layer.shape
+        self._update_action_states()
+        self._show_transient_message(
+            f"Đã copy thuộc tính hình khối của layer '{layer.name}'."
+        )
+
+    def _on_paste_shape_attributes(self) -> None:
+        document = self.current_document
+        if (
+            document is None
+            or document.active_layer is None
+            or self._shape_attributes is None
+        ):
+            return
+        layer = document.active_layer
+        if layer.kind != LayerKind.SHAPE:
+            self._show_transient_message(
+                "Hãy chọn một layer hình khối để dán thuộc tính."
+            )
+            return
+        try:
+            changed = document.update_shape_layer(self._shape_attributes, layer)
+        except (ValueError, MemoryError) as exc:
+            QMessageBox.warning(self, "Không thể dán thuộc tính", str(exc))
+            return
+        if changed:
+            self._show_transient_message(
+                "Đã dán thuộc tính hình khối (Ctrl+Z để hoàn tác)."
+            )
+
+    def _add_unavailable_menu_action(
+        self, menu: QMenu, label: str, reason: str
+    ) -> QAction:
+        action = QAction(label, menu)
+        action.setEnabled(False)
+        action.setToolTip(reason)
+        menu.addAction(action)
+        return action
+
+    def build_layer_context_menu(self, layer: Layer) -> QMenu:
+        document = self.current_document
+        menu = QMenu(self)
+        if document is None:
+            return menu
+        document.set_active_layer(layer)
+        self._update_action_states()
+
+        menu.addAction(self.action_blending_options)
+        menu.addAction(self.action_edit_adjustment)
+        menu.addSeparator()
+        menu.addAction(self.action_copy_css)
+        menu.addAction(self.action_copy_svg)
+        menu.addAction(self.action_duplicate_layer)
+        menu.addAction(self.action_delete_layer)
+        menu.addAction(self.action_group_layers)
+        menu.addSeparator()
+        menu.addAction(self.action_quick_export_png)
+        menu.addAction(self.action_export)
+        menu.addSeparator()
+        self._add_unavailable_menu_action(
+            menu, "Artboard from Layers…", "Chưa hỗ trợ artboard."
+        )
+        self._add_unavailable_menu_action(
+            menu, "Frame from Layers…", "Chưa hỗ trợ frame."
+        )
+        self._add_unavailable_menu_action(
+            menu, "Convert to Frame", "Chưa hỗ trợ frame."
+        )
+        menu.addSeparator()
+        menu.addAction(self.action_convert_smart)
+        menu.addSeparator()
+        menu.addAction(self.action_rasterize_layer)
+        self._add_unavailable_menu_action(
+            menu, "Rasterize Layer Style", "Chưa hỗ trợ layer style."
+        )
+        menu.addSeparator()
+        menu.addAction(self.action_toggle_mask)
+        self._add_unavailable_menu_action(
+            menu, "Disable Vector Mask", "Chưa hỗ trợ vector mask."
+        )
+        menu.addAction(self.action_clipping_mask)
+        menu.addSeparator()
+        self._add_unavailable_menu_action(
+            menu, "Link Layers", "Chưa hỗ trợ liên kết layer."
+        )
+        self._add_unavailable_menu_action(
+            menu, "Select Linked Layers", "Chưa hỗ trợ liên kết layer."
+        )
+        menu.addSeparator()
+        for label in ("Copy Layer Style", "Paste Layer Style", "Clear Layer Style"):
+            self._add_unavailable_menu_action(
+                menu, label, "Chưa hỗ trợ layer style."
+            )
+        menu.addSeparator()
+        menu.addAction(self.action_copy_shape_attributes)
+        menu.addAction(self.action_paste_shape_attributes)
+        menu.addSeparator()
+        self._add_unavailable_menu_action(
+            menu, "Release from Isolation", "Chưa hỗ trợ isolation mode."
+        )
+        menu.addSeparator()
+        self._add_unavailable_menu_action(
+            menu, "Merge Layers", "Cần chọn từ hai layer trở lên."
+        )
+        menu.addAction(self.action_merge_visible)
+        menu.addAction(self.action_flatten)
+        menu.addSeparator()
+        color_group = QActionGroup(menu)
+        color_group.setExclusive(True)
+        for label_id, label_text in LAYER_COLOR_LABELS:
+            action = QAction(label_text, menu)
+            action.setCheckable(True)
+            action.setChecked(layer.color_label == label_id)
+            action.triggered.connect(
+                lambda _checked=False, value=label_id: self._on_set_layer_color_label(
+                    value
+                )
+            )
+            color_group.addAction(action)
+            menu.addAction(action)
+        menu.addSeparator()
+        self._add_unavailable_menu_action(
+            menu, "Postcard", "Chưa hỗ trợ Postcard."
+        )
+        self._add_unavailable_menu_action(
+            menu,
+            "New 3D Extrusion from Selected Layer",
+            "Chưa hỗ trợ 3D.",
+        )
+        self._add_unavailable_menu_action(
+            menu,
+            "New 3D Extrusion from Current Selection",
+            "Chưa hỗ trợ 3D.",
+        )
+        return menu
+
+    def _on_layer_context_requested(self, layer_id: str, global_pos: QPoint) -> None:
+        document = self.current_document
+        if document is None:
+            return
+        layer = document.layers.get(layer_id)
+        if layer is None:
+            return
+        self._layer_context_menu = self.build_layer_context_menu(layer)
+        self._layer_context_menu.popup(global_pos)
 
     # ------------------------------------------------------------ vùng chọn
     def _on_select_all(self) -> None:
@@ -2176,6 +2575,7 @@ class MainWindow(QMainWindow):
             ("Sửa / Rasterize văn bản", "Menu Type"),
             ("Nhân bản layer", "Ctrl+J"),
             ("Đổi tên layer", "F2"),
+            ("Clipping Mask", "Ctrl+Alt+G"),
             ("Merge Down / Flatten", "Ctrl+E / Ctrl+Shift+E"),
             ("Zoom In / Out", "Ctrl+= / Ctrl+-"),
             ("Fit / 100%", "Ctrl+0 / Ctrl+1"),

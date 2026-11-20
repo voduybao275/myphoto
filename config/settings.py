@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "My Photo Studio"
 APP_SLUG = "MyPhotoStudio"
-APP_VERSION = "0.25.0"
+APP_VERSION = "0.30.0"
 
 PROJECT_EXTENSION = ".mps"
 PROJECT_FILTER = "My Photo Studio Project (*.mps)"

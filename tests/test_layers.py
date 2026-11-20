@@ -42,11 +42,15 @@ def test_copy_is_independent():
     layer.offset_x = 3
     layer.opacity = 0.5
     layer.blend_mode = "multiply"
+    layer.clipping = True
+    layer.color_label = "violet"
     clone = layer.copy()
     assert clone.name == "Gốc copy"
     assert clone.offset_x == 3
     assert clone.opacity == 0.5
     assert clone.blend_mode == "multiply"
+    assert clone.clipping
+    assert clone.color_label == "violet"
     clone.pixels[0, 0] = (0, 255, 0, 255)
     assert layer.pixels[0, 0, 0] == 255
     assert clone.id != layer.id

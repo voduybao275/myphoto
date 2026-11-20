@@ -1,0 +1,4 @@
+# Công cụ đóng gói bản portable (không cần cho người dùng cuối).
+# Cài vào cùng venv đang chạy ứng dụng:
+#   uv pip install --python .venv310qt5\Scripts\python.exe -r requirements-build.txt
+PyInstaller==6.22.3

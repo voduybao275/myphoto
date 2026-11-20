@@ -97,6 +97,37 @@ def test_radius_is_clamped_and_ignored_for_other_kinds():
     assert rectangle.corner_radius == 0.0
 
 
+def test_per_corner_radii_render_and_roundtrip():
+    properties = ShapeProperties(
+        kind="rounded_rectangle",
+        width=60,
+        height=40,
+        fill_color=(200, 60, 40, 255),
+        corner_radii=(0.0, 20.0, 20.0, 0.0),
+    )
+    assert properties.corner_radius == 20.0
+    assert properties.corner_radii == (0.0, 20.0, 20.0, 0.0)
+    pixels = render_shape(properties)
+    assert pixels[0, 0, 3] == 255
+    assert pixels[0, -1, 3] == 0
+    assert pixels[-1, -1, 3] == 0
+    assert pixels[-1, 0, 3] == 255
+    assert ShapeProperties.from_dict(properties.to_dict()) == properties
+
+
+def test_invalid_per_corner_radii_are_rejected():
+    with pytest.raises(ValueError, match="bốn giá trị"):
+        ShapeProperties(
+            kind="rounded_rectangle",
+            corner_radii=(1.0, 2.0, 3.0),
+        )
+    with pytest.raises(ValueError, match="bốn giá trị"):
+        ShapeProperties(
+            kind="rounded_rectangle",
+            corner_radii=(1.0, -2.0, 3.0, 4.0),
+        )
+
+
 def test_dict_roundtrip_and_defaults():
     properties = ShapeProperties(
         kind="ellipse",

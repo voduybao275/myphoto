@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QRectF
 
+from core.adjustment_layer import AdjustmentProperties
 from core.document import Document
+from core.fill_layer import FillProperties
+from core.layer import LayerKind
 from core.selection import Selection
 
 
@@ -315,3 +318,137 @@ def test_paste_pixels_creates_layer_at_offset_or_centered():
     assert (centered.offset_x, centered.offset_y) == (7, 3)
     with pytest.raises(ValueError):
         document.paste_pixels(np.zeros((2, 2, 3), dtype=np.uint8))
+
+
+def test_clipping_mask_requires_base_and_is_undoable():
+    document = make_document()
+    base = solid_layer(document)
+    with pytest.raises(ValueError, match="layer nền"):
+        document.set_layer_clipping(base, True)
+
+    upper = solid_layer(document, rgba=(9, 8, 7, 255), name="Upper")
+    assert document.set_layer_clipping(upper, True)
+    assert upper.clipping
+    assert document.history.undo_label == "Tạo Clipping Mask"
+    assert document.undo()
+    assert not upper.clipping
+    assert document.redo()
+    assert upper.clipping
+
+    assert document.set_layer_clipping(upper, False)
+    assert not upper.clipping
+    assert document.history.undo_label == "Giải phóng Clipping Mask"
+    assert document.undo()
+    assert upper.clipping
+
+
+def test_clipping_mask_rejects_adjustment_base():
+    document = make_document()
+    document.add_adjustment_layer(AdjustmentProperties(kind="invert"), record=False)
+    upper = solid_layer(document, name="Upper")
+    with pytest.raises(ValueError, match="điều chỉnh"):
+        document.set_layer_clipping(upper, True)
+    assert not upper.clipping
+
+
+def test_color_label_is_undoable():
+    document = make_document()
+    layer = solid_layer(document)
+    assert document.set_layer_color_label(layer, "red")
+    assert layer.color_label == "red"
+    assert document.history.undo_label == "Đổi màu nhãn layer"
+    assert document.undo()
+    assert layer.color_label == "none"
+    assert document.redo()
+    assert layer.color_label == "red"
+    with pytest.raises(ValueError, match="Nhãn màu"):
+        document.set_layer_color_label(layer, "pink")
+
+
+def test_blending_options_apply_as_one_undo_step():
+    document = make_document()
+    layer = solid_layer(document)
+    assert document.set_layer_blending(layer, "multiply", 0.4)
+    assert layer.blend_mode == "multiply"
+    assert layer.opacity == pytest.approx(0.4)
+    assert document.history.undo_label == "Blending Options"
+    assert document.undo()
+    assert layer.blend_mode == "normal"
+    assert layer.opacity == 1.0
+    assert document.redo()
+    assert layer.blend_mode == "multiply"
+    assert layer.opacity == pytest.approx(0.4)
+
+    adjustment = document.add_adjustment_layer(
+        AdjustmentProperties(kind="invert"), record=False
+    )
+    with pytest.raises(ValueError, match="blend mode"):
+        document.set_layer_blending(adjustment, "screen", None)
+    assert document.set_layer_blending(adjustment, None, 0.5)
+    assert adjustment.opacity == pytest.approx(0.5)
+
+
+def test_merge_visible_keeps_hidden_layers():
+    document = make_document(4, 4)
+    red = solid_layer(document, (255, 0, 0, 255), name="Red")
+    blue = solid_layer(document, (0, 0, 255, 255), name="Blue")
+    hidden = solid_layer(document, (0, 255, 0, 255), name="Hidden")
+    document.set_layer_visible(hidden, False)
+
+    assert document.merge_visible()
+    assert len(document.layers) == 2
+    merged = document.active_layer
+    assert merged is not None and merged.name == "Merged"
+    assert hidden in document.layers.layers
+    assert tuple(int(value) for value in merged.pixels[0, 0]) == (0, 0, 255, 255)
+    assert document.history.undo_label == "Merge Visible"
+    assert document.undo()
+    assert [layer.name for layer in document.layers] == ["Red", "Blue", "Hidden"]
+    assert document.redo()
+    assert len(document.layers) == 2
+
+
+def test_convert_pixel_layer_to_smart_object_and_back():
+    document = make_document(4, 4)
+    layer = solid_layer(document, (12, 34, 56, 255), name="Source")
+    original = layer.pixels.copy()
+    assert document.convert_to_smart_object(layer)
+    assert layer.kind == LayerKind.SMART
+    assert layer.smart_props is not None
+    assert (layer.smart_props.source_width, layer.smart_props.source_height) == (4, 4)
+    assert np.array_equal(layer.smart_source, original)
+    assert document.history.undo_label == "Chuyển thành Smart Object"
+    assert document.undo()
+    assert layer.kind == LayerKind.PIXEL
+    assert document.redo()
+    assert layer.kind == LayerKind.SMART
+
+
+def test_convert_fill_to_smart_object_uses_canvas_size():
+    document = make_document(6, 4)
+    layer = document.add_fill_layer(FillProperties(fill_type="solid"), record=False)
+    assert document.convert_to_smart_object(layer)
+    assert layer.kind == LayerKind.SMART
+    assert (layer.width, layer.height) == (6, 4)
+    assert (layer.offset_x, layer.offset_y) == (0, 0)
+    assert layer.pixels.shape == (4, 6, 4)
+
+
+def test_rasterize_layer_dispatches_by_kind():
+    document = make_document(4, 4)
+    layer = solid_layer(document)
+    assert document.convert_to_smart_object(layer)
+    assert layer.kind == LayerKind.SMART
+    assert document.rasterize_layer(layer)
+    assert layer.kind == LayerKind.PIXEL
+    assert document.history.undo_label == "Rasterize smart object"
+    assert document.undo()
+    assert layer.kind == LayerKind.SMART
+    assert document.redo()
+    assert not document.rasterize_layer(layer)
+
+    adjustment = document.add_adjustment_layer(
+        AdjustmentProperties(kind="invert"), record=False
+    )
+    with pytest.raises(ValueError, match="rasterize"):
+        document.rasterize_layer(adjustment)

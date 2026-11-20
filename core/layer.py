@@ -36,6 +36,19 @@ BLEND_MODES: list[tuple[str, str]] = [
 BLEND_MODE_IDS: list[str] = [mode for mode, _ in BLEND_MODES]
 BLEND_MODE_LABELS: dict[str, str] = dict(BLEND_MODES)
 
+# Nhãn màu layer giống Photoshop; chỉ là metadata, không ảnh hưởng pixel.
+LAYER_COLOR_LABELS: list[tuple[str, str]] = [
+    ("none", "No Color"),
+    ("red", "Red"),
+    ("orange", "Orange"),
+    ("yellow", "Yellow"),
+    ("green", "Green"),
+    ("blue", "Blue"),
+    ("violet", "Violet"),
+    ("gray", "Gray"),
+]
+LAYER_COLOR_IDS: list[str] = [label for label, _ in LAYER_COLOR_LABELS]
+
 
 class LayerKind:
     PIXEL = "pixel"
@@ -81,6 +94,8 @@ class Layer:
         self.opacity: float = 1.0
         self.blend_mode: str = "normal"
         self.locked: bool = False
+        self.clipping: bool = False
+        self.color_label: str = "none"
         self.mask: np.ndarray | None = None
         self.mask_enabled: bool = True
         self.pixel_revision: int = 0
@@ -149,6 +164,8 @@ class Layer:
         clone.opacity = self.opacity
         clone.blend_mode = self.blend_mode
         clone.locked = self.locked
+        clone.clipping = self.clipping
+        clone.color_label = self.color_label
         clone.mask = self.mask.copy() if self.mask is not None else None
         clone.mask_enabled = self.mask_enabled
         return clone

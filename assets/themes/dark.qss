@@ -207,6 +207,23 @@ QLabel#PropKey {
 QLabel#PropValue {
     color: #e7e9ec;
 }
+QLabel#PropLayerType {
+    color: #e7e9ec;
+}
+QScrollArea#PropertiesScroll, QScrollArea#PropertiesScroll > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+QToolButton#PropSection {
+    color: #d7dbe0;
+    font-weight: 700;
+    padding: 2px 0;
+    background: transparent;
+    border: none;
+}
+QToolButton#PropSection:hover {
+    color: #ffffff;
+}
 QFrame#PanelSeparator {
     background-color: #34383f;
     max-height: 1px;

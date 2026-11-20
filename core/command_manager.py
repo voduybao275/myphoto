@@ -60,7 +60,7 @@ class RemoveLayerCommand(Command):
 
 
 class SetLayerPropertyCommand(Command):
-    """Đổi thuộc tính đơn giản: visible, opacity, blend_mode, name."""
+    """Đổi thuộc tính đơn giản: visible, opacity, blend_mode, name, locked, clipping, color_label."""
 
     def __init__(
         self,

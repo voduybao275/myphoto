@@ -44,7 +44,13 @@ from core.command_manager import (
     UngroupLayersCommand,
 )
 from core.history_manager import HistoryManager
-from core.layer import BLEND_MODE_IDS, Layer, LayerKind, LayerManager
+from core.layer import (
+    BLEND_MODE_IDS,
+    LAYER_COLOR_IDS,
+    Layer,
+    LayerKind,
+    LayerManager,
+)
 from core.paint import BrushSettings, BrushStrokeSession, PAINT_TARGETS
 from core.gradient import GradientSession, GradientSettings
 from core.selection import MAX_FEATHER_RADIUS, Selection
@@ -656,6 +662,105 @@ class Document(QObject):
         self._apply_command(command)
         return True
 
+    def _clipping_base(self, layer: Layer) -> Layer | None:
+        """Layer nền gần nhất bên dưới trong cùng nhóm (bỏ qua các layer đang clip)."""
+        siblings = self.layers.children_of(layer.group_id)
+        try:
+            index = siblings.index(layer)
+        except ValueError:
+            return None
+        for candidate in reversed(siblings[:index]):
+            if not candidate.clipping:
+                return candidate
+        return None
+
+    def set_layer_clipping(self, layer: Layer | None = None, clipping: bool = True) -> bool:
+        """Bật/tắt Clipping Mask: layer chỉ hiện trong vùng alpha của layer nền."""
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        clipping = bool(clipping)
+        if target.clipping == clipping:
+            return False
+        if clipping:
+            base = self._clipping_base(target)
+            if base is None:
+                raise ValueError(
+                    "Clipping Mask cần một layer nền nằm bên dưới trong cùng nhóm."
+                )
+            if base.kind == LayerKind.ADJUSTMENT:
+                raise ValueError(
+                    "Không thể tạo Clipping Mask với layer điều chỉnh làm layer nền."
+                )
+        command = SetLayerPropertyCommand(
+            target,
+            "clipping",
+            target.clipping,
+            clipping,
+            label="Tạo Clipping Mask" if clipping else "Giải phóng Clipping Mask",
+        )
+        self._apply_command(command)
+        return True
+
+    def set_layer_color_label(
+        self, layer: Layer | None = None, color_label: str = "none"
+    ) -> bool:
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        label = str(color_label)
+        if label not in LAYER_COLOR_IDS:
+            raise ValueError(f"Nhãn màu layer không hợp lệ: {color_label}")
+        if target.color_label == label:
+            return False
+        command = SetLayerPropertyCommand(
+            target,
+            "color_label",
+            target.color_label,
+            label,
+            "Đổi màu nhãn layer",
+        )
+        self._apply_command(command)
+        return True
+
+    def set_layer_blending(
+        self,
+        layer: Layer | None = None,
+        blend_mode: str | None = None,
+        opacity: float | None = None,
+    ) -> bool:
+        """Đổi blend mode và opacity trong cùng một bước Undo."""
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        mode = target.blend_mode if blend_mode is None else str(blend_mode)
+        if mode not in BLEND_MODE_IDS:
+            raise ValueError(f"Blend mode không hợp lệ: {mode}")
+        if target.kind == LayerKind.ADJUSTMENT and mode != target.blend_mode:
+            raise ValueError("Layer điều chỉnh không dùng blend mode.")
+        alpha = (
+            target.opacity
+            if opacity is None
+            else max(0.0, min(1.0, float(opacity)))
+        )
+        commands = []
+        if mode != target.blend_mode:
+            commands.append(
+                SetLayerPropertyCommand(
+                    target, "blend_mode", target.blend_mode, mode, "Blending Options"
+                )
+            )
+        if abs(alpha - target.opacity) > 1e-6:
+            commands.append(
+                SetLayerPropertyCommand(
+                    target, "opacity", target.opacity, alpha, "Blending Options"
+                )
+            )
+        if not commands:
+            return False
+        self._apply_command(MacroCommand(commands, label="Blending Options"))
+        return True
+
     def set_layer_opacity(self, layer: Layer, opacity: float) -> bool:
         opacity = float(max(0.0, min(1.0, opacity)))
         if abs(layer.opacity - opacity) < 1e-6:
@@ -764,6 +869,43 @@ class Document(QObject):
             commands.append(RemoveLayerCommand(self.layers[index], index, label="Flatten Image"))
         commands.append(AddLayerCommand(merged, 0, label="Flatten Image"))
         self._apply_command(MacroCommand(commands, label="Flatten Image"))
+        self.set_active_layer(merged)
+        return True
+
+    def merge_visible(self) -> bool:
+        """Gộp các layer gốc đang hiện thành một layer, giữ lại layer ẩn."""
+        roots = self.layers.children_of(None)
+        visible_roots = [
+            layer for layer in roots if layer.visible and layer.opacity > 0.0
+        ]
+        if len(visible_roots) < 2:
+            return False
+        merged_pixels = composite_layers(list(self.layers), self.width, self.height)
+        merged = Layer(self.width, self.height, "Merged")
+        merged.set_pixels(merged_pixels)
+
+        old_order = list(self.layers)
+        removed_ids: set[str] = set()
+        for root in visible_roots:
+            subtree = (
+                self._subtree_layers(root)
+                if root.kind == LayerKind.GROUP
+                else [root]
+            )
+            removed_ids.update(layer.id for layer in subtree)
+        top_index = max(visible_roots, key=self.layers.index_of)
+        insert_at = sum(
+            1
+            for index, layer in enumerate(old_order)
+            if layer.id not in removed_ids and index < old_order.index(top_index)
+        )
+        commands = [
+            RemoveLayerCommand(layer, index, label="Merge Visible")
+            for index, layer in reversed(list(enumerate(old_order)))
+            if layer.id in removed_ids
+        ]
+        commands.append(AddLayerCommand(merged, insert_at, label="Merge Visible"))
+        self._apply_command(MacroCommand(commands, label="Merge Visible"))
         self.set_active_layer(merged)
         return True
 
@@ -1967,6 +2109,75 @@ class Document(QObject):
         self._apply_command(command, record=record)
         return True
 
+    def convert_to_smart_object(
+        self, layer: Layer | None = None, *, record: bool = True
+    ) -> bool:
+        """Đóng gói nội dung hiện tại của layer thành smart object biến đổi được."""
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        if target.kind in (LayerKind.GROUP, LayerKind.ADJUSTMENT):
+            raise ValueError("Không thể chuyển nhóm hoặc layer điều chỉnh thành smart object.")
+        if target.kind == LayerKind.SMART:
+            return False
+        if target.kind == LayerKind.FILL:
+            if target.fill_props is None:
+                return False
+            if target.mask is not None:
+                raise ValueError(
+                    "Hãy áp hoặc xoá layer mask trước khi chuyển thành smart object."
+                )
+            source = render_fill(target.fill_props, self.width, self.height)
+            width, height = self.width, self.height
+            offset_x, offset_y = 0, 0
+        else:
+            source = target.pixels.copy()
+            width, height = target.width, target.height
+            offset_x, offset_y = target.offset_x, target.offset_y
+        properties = SmartObjectProperties(
+            source_name=target.name,
+            source_width=width,
+            source_height=height,
+        )
+        old_state = LayerSnapshot.capture(target)
+        new_state = LayerSnapshot(
+            layer=target,
+            pixels=source,
+            width=width,
+            height=height,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            mask=target.mask,
+            mask_enabled=target.mask_enabled,
+            kind=LayerKind.SMART,
+            smart=properties,
+            smart_source=source,
+        )
+        command = LayerTransformCommand(
+            old_state, new_state, "Chuyển thành Smart Object"
+        )
+        self._apply_command(command, record=record)
+        return True
+
+    def rasterize_layer(
+        self, layer: Layer | None = None, *, record: bool = True
+    ) -> bool:
+        """Rasterize layer theo loại hiện tại (văn bản/hình/tô/smart object)."""
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        if target.kind == LayerKind.TEXT:
+            return self.rasterize_text_layer(target, record=record)
+        if target.kind == LayerKind.SHAPE:
+            return self.rasterize_shape_layer(target, record=record)
+        if target.kind == LayerKind.FILL:
+            return self.rasterize_fill_layer(target, record=record)
+        if target.kind == LayerKind.SMART:
+            return self.rasterize_smart_layer(target, record=record)
+        if target.kind == LayerKind.PIXEL:
+            return False
+        raise ValueError("Không thể rasterize nhóm hoặc layer điều chỉnh.")
+
     # ---------------------------------------------------- layer điều chỉnh
     def update_adjustment_layer(
         self,
@@ -2408,6 +2619,12 @@ class Document(QObject):
             layer.name = str(value)
         elif attribute == "locked":
             layer.locked = bool(value)
+        elif attribute == "clipping":
+            layer.clipping = bool(value)
+        elif attribute == "color_label":
+            if value not in LAYER_COLOR_IDS:
+                raise ValueError(f"Nhãn màu layer không hợp lệ: {value}")
+            layer.color_label = str(value)
         elif attribute == "group_id":
             layer.group_id = str(value) if value else None
         else:

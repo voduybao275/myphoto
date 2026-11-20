@@ -52,6 +52,7 @@ class ShapeProperties:
     stroke_color: Rgba = (255, 255, 255, 255)
     stroke_width: int = 0
     corner_radius: float = 0.0
+    corner_radii: tuple[float, float, float, float] | None = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind).lower()
@@ -85,8 +86,27 @@ class ShapeProperties:
             )
         if kind != "rounded_rectangle":
             radius = 0.0
+            radii = (0.0, 0.0, 0.0, 0.0)
         else:
-            radius = min(radius, min(width, height) / 2.0)
+            limit = min(width, height) / 2.0
+            if self.corner_radii is None:
+                radii = (min(radius, limit),) * 4
+            else:
+                try:
+                    values = tuple(float(value) for value in self.corner_radii)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "Bán kính bo góc không hợp lệ."
+                    ) from exc
+                if len(values) != 4 or any(
+                    not 0.0 <= value <= MAX_CORNER_RADIUS for value in values
+                ):
+                    raise ValueError(
+                        "Bán kính bo góc phải là bốn giá trị trong khoảng "
+                        f"0..{MAX_CORNER_RADIUS} px."
+                    )
+                radii = tuple(min(value, limit) for value in values)
+            radius = max(radii)
         fill_color = (
             None
             if self.fill_color is None
@@ -102,6 +122,7 @@ class ShapeProperties:
         object.__setattr__(self, "stroke_color", stroke_color)
         object.__setattr__(self, "stroke_width", stroke_width)
         object.__setattr__(self, "corner_radius", radius)
+        object.__setattr__(self, "corner_radii", radii)
 
     @property
     def has_fill(self) -> bool:
@@ -124,6 +145,9 @@ class ShapeProperties:
             "stroke_color": list(self.stroke_color),
             "stroke_width": self.stroke_width,
             "corner_radius": round(float(self.corner_radius), 3),
+            "corner_radii": [
+                round(float(value), 3) for value in self.corner_radii or ()
+            ],
         }
 
     @classmethod
@@ -131,6 +155,7 @@ class ShapeProperties:
         if not isinstance(data, dict):
             raise ValueError("Dữ liệu hình khối không hợp lệ.")
         fill = data["fill_color"] if "fill_color" in data else (59, 110, 165, 255)
+        radii = data.get("corner_radii")
         try:
             return cls(
                 kind=str(data.get("kind", "rectangle")),
@@ -142,9 +167,74 @@ class ShapeProperties:
                 ),
                 stroke_width=int(data.get("stroke_width", 0)),
                 corner_radius=float(data.get("corner_radius", 0.0)),
+                corner_radii=(
+                    None if radii is None else tuple(radii)  # type: ignore[arg-type]
+                ),
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Thuộc tính hình khối không hợp lệ: {exc}") from exc
+
+
+def _rounded_rect_path(
+    rect: QRectF, radii: tuple[float, float, float, float]
+) -> QPainterPath:
+    """Đường dẫn chữ nhật với bán kính riêng cho bốn góc TL/TR/BR/BL."""
+    limit = min(rect.width(), rect.height()) / 2.0
+    top_left, top_right, bottom_right, bottom_left = (
+        min(max(0.0, float(value)), limit) for value in radii
+    )
+    left, top = rect.left(), rect.top()
+    right, bottom = rect.right(), rect.bottom()
+    path = QPainterPath()
+    path.moveTo(left + top_left, top)
+    if top_right > 0.0:
+        path.lineTo(right - top_right, top)
+        path.arcTo(
+            QRectF(right - 2.0 * top_right, top, 2.0 * top_right, 2.0 * top_right),
+            90.0,
+            -90.0,
+        )
+    else:
+        path.lineTo(right, top)
+    if bottom_right > 0.0:
+        path.lineTo(right, bottom - bottom_right)
+        path.arcTo(
+            QRectF(
+                right - 2.0 * bottom_right,
+                bottom - 2.0 * bottom_right,
+                2.0 * bottom_right,
+                2.0 * bottom_right,
+            ),
+            0.0,
+            -90.0,
+        )
+    else:
+        path.lineTo(right, bottom)
+    if bottom_left > 0.0:
+        path.lineTo(left + bottom_left, bottom)
+        path.arcTo(
+            QRectF(
+                left,
+                bottom - 2.0 * bottom_left,
+                2.0 * bottom_left,
+                2.0 * bottom_left,
+            ),
+            270.0,
+            -90.0,
+        )
+    else:
+        path.lineTo(left, bottom)
+    if top_left > 0.0:
+        path.lineTo(left, top + top_left)
+        path.arcTo(
+            QRectF(left, top, 2.0 * top_left, 2.0 * top_left),
+            180.0,
+            -90.0,
+        )
+    else:
+        path.lineTo(left, top)
+    path.closeSubpath()
+    return path
 
 
 def render_shape(properties: ShapeProperties) -> np.ndarray:
@@ -168,12 +258,16 @@ def render_shape(properties: ShapeProperties) -> np.ndarray:
         if properties.kind == "ellipse":
             path.addEllipse(rect)
         elif properties.kind == "rounded_rectangle":
-            radius = min(
-                properties.corner_radius,
-                rect.width() / 2.0,
-                rect.height() / 2.0,
-            )
-            path.addRoundedRect(rect, radius, radius)
+            radii = properties.corner_radii or (0.0, 0.0, 0.0, 0.0)
+            if max(radii) - min(radii) < 1e-9:
+                radius = min(
+                    radii[0],
+                    rect.width() / 2.0,
+                    rect.height() / 2.0,
+                )
+                path.addRoundedRect(rect, radius, radius)
+            else:
+                path = _rounded_rect_path(rect, radii)
         else:
             path.addRect(rect)
 

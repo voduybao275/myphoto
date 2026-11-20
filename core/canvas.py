@@ -198,6 +198,95 @@ def _composite_source_band(
     dest[..., 3] = np.clip(out_alpha, 0.0, 1.0)
 
 
+def _base_alpha_band(
+    layer: Layer,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    canvas_width: int,
+    canvas_height: int,
+    parent_map: dict[str | None, list[Layer]],
+    stack: frozenset[str],
+) -> np.ndarray:
+    """Alpha của layer nền (0..1) dùng làm clipping mask cho các layer phía trên."""
+    band = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
+    if not layer.visible or layer.opacity <= 0.0:
+        return band
+
+    if layer.kind == LayerKind.GROUP:
+        if layer.id in stack:
+            return band
+        group = np.zeros((y1 - y0, x1 - x0, 4), dtype=np.float32)
+        _composite_children_rect(
+            group,
+            parent_map.get(layer.id, []),
+            x0,
+            y0,
+            x1,
+            y1,
+            canvas_width,
+            canvas_height,
+            parent_map,
+            stack | {layer.id},
+        )
+        band[...] = group[..., 3] * float(layer.opacity)
+    elif layer.kind == LayerKind.FILL:
+        if layer.fill_props is None:
+            return band
+        src = render_fill_band(
+            layer.fill_props,
+            y0,
+            y1,
+            canvas_width,
+            canvas_height,
+            x0=x0,
+            x1=x1,
+        )
+        band[...] = src[..., 3] * float(layer.opacity)
+    elif layer.kind == LayerKind.ADJUSTMENT:
+        # Layer điều chỉnh không có độ trong suốt riêng; coi như phủ toàn canvas.
+        band.fill(float(layer.opacity))
+    else:
+        ix0 = max(x0, max(0, layer.offset_x))
+        ix1 = min(x1, min(canvas_width, layer.offset_x + layer.width))
+        iy0 = max(y0, max(0, layer.offset_y))
+        iy1 = min(y1, min(canvas_height, layer.offset_y + layer.height))
+        if ix1 <= ix0 or iy1 <= iy0:
+            return band
+        local_y0 = iy0 - layer.offset_y
+        local_y1 = iy1 - layer.offset_y
+        local_x0 = ix0 - layer.offset_x
+        local_x1 = ix1 - layer.offset_x
+        alpha = (
+            layer.pixels[local_y0:local_y1, local_x0:local_x1, 3].astype(np.float32)
+            * float(layer.opacity)
+            * (1.0 / 255.0)
+        )
+        if (
+            layer.mask is not None
+            and layer.mask_enabled
+            and layer.mask.shape == (layer.height, layer.width)
+        ):
+            alpha *= (
+                layer.mask[local_y0:local_y1, local_x0:local_x1].astype(np.float32)
+                * (1.0 / 255.0)
+            )
+        band[iy0 - y0 : iy1 - y0, ix0 - x0 : ix1 - x0] = alpha
+        return band
+
+    mask = layer.mask
+    if (
+        mask is not None
+        and layer.mask_enabled
+        and mask.ndim == 2
+        and mask.shape[1] >= x1
+        and mask.shape[0] >= y1
+    ):
+        band *= mask[y0:y1, x0:x1].astype(np.float32) * (1.0 / 255.0)
+    return band
+
+
 def _blend_rect(
     accumulator: np.ndarray,
     layer: Layer,
@@ -207,6 +296,7 @@ def _blend_rect(
     y1: int,
     canvas_width: int,
     canvas_height: int,
+    clip_alpha: np.ndarray | None = None,
 ) -> None:
     if not layer.visible or layer.opacity <= 0.0:
         return
@@ -238,6 +328,8 @@ def _blend_rect(
         ):
             mask_rect = mask[y0:y1, x0:x1].astype(np.float32) * (1.0 / 255.0)
             src_alpha = src_alpha * mask_rect
+        if clip_alpha is not None:
+            src_alpha = src_alpha * clip_alpha
         _composite_source_band(
             accumulator, src[..., :3], src_alpha, layer.blend_mode
         )
@@ -262,6 +354,10 @@ def _blend_rect(
     if layer.mask is not None and layer.mask_enabled:
         mask_crop = layer.mask[local_y0:local_y1, local_x0:local_x1]
         src_alpha = src_alpha * (mask_crop.astype(np.float32) * (1.0 / 255.0))
+    if clip_alpha is not None:
+        src_alpha = src_alpha * clip_alpha[
+            iy0 - y0 : iy1 - y0, ix0 - x0 : ix1 - x0
+        ]
 
     _composite_source_band(dest, src[..., :3], src_alpha, layer.blend_mode)
 
@@ -277,6 +373,7 @@ def _blend_group_rect(
     canvas_height: int,
     parent_map: dict[str | None, list[Layer]],
     stack: frozenset[str],
+    clip_alpha: np.ndarray | None = None,
 ) -> None:
     """Hợp nhất các layer con vào buffer riêng rồi trộn cả nhóm như một layer."""
     if not layer.visible or layer.opacity <= 0.0 or layer.id in stack:
@@ -308,6 +405,8 @@ def _blend_group_rect(
     ):
         mask_rect = mask[y0:y1, x0:x1].astype(np.float32) * (1.0 / 255.0)
         src_alpha = src_alpha * mask_rect
+    if clip_alpha is not None:
+        src_alpha = src_alpha * clip_alpha
 
     _composite_source_band(
         accumulator, group[..., :3], src_alpha, layer.blend_mode
@@ -326,7 +425,24 @@ def _composite_children_rect(
     parent_map: dict[str | None, list[Layer]],
     stack: frozenset[str] = frozenset(),
 ) -> None:
+    base_layer: Layer | None = None
+    base_alpha: np.ndarray | None = None
     for layer in children:
+        clip_alpha: np.ndarray | None = None
+        if layer.clipping and base_layer is not None:
+            if base_alpha is None:
+                base_alpha = _base_alpha_band(
+                    base_layer,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    canvas_width,
+                    canvas_height,
+                    parent_map,
+                    stack,
+                )
+            clip_alpha = base_alpha
         if layer.kind == LayerKind.GROUP:
             _blend_group_rect(
                 accumulator,
@@ -339,6 +455,7 @@ def _composite_children_rect(
                 canvas_height,
                 parent_map,
                 stack,
+                clip_alpha,
             )
         else:
             _blend_rect(
@@ -350,7 +467,11 @@ def _composite_children_rect(
                 y1,
                 canvas_width,
                 canvas_height,
+                clip_alpha,
             )
+        if not layer.clipping or base_layer is None:
+            base_layer = layer
+            base_alpha = None
 
 
 def composite_region(
@@ -395,6 +516,7 @@ def composite_region(
         and visible[0].blend_mode == "normal"
         and visible[0].opacity >= 0.999
         and visible[0].pixels is not None
+        and not visible[0].clipping
         and not (visible[0].mask is not None and visible[0].mask_enabled)
     ):
         only = visible[0]

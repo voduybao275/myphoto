@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import Qt, QEvent, QPointF
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QMenu
+from PySide6.QtWidgets import QApplication, QDialog, QMenu
 
 from config.settings import THEME_DARK, THEME_LIGHT, SettingsStore
 from core.adjustment_layer import AdjustmentProperties
@@ -30,7 +30,13 @@ from ui.dialogs import (
     TextDialog,
     UnsharpMaskDialog,
 )
-from ui.layers_panel import ROLE_KIND, ROLE_SUBTITLE, LayersPanel
+from ui.layers_panel import (
+    ROLE_CLIPPING,
+    ROLE_COLOR_LABEL,
+    ROLE_KIND,
+    ROLE_SUBTITLE,
+    LayersPanel,
+)
 from ui.main_window import MainWindow
 
 
@@ -582,6 +588,228 @@ def test_properties_panel_shows_text_path_and_kerning(qapp):
     panel.deleteLater()
 
 
+def test_text_properties_panel_shows_transform(qapp):
+    from ui.properties_panel import PropertiesPanel
+
+    document = Document(240, 180, name="Text transform")
+    layer = document.add_text_layer(
+        TextProperties("Properties", font_size=24), 30, 40, record=False
+    )
+    panel = PropertiesPanel()
+    panel.bind_document(document)
+    panel.show()
+    qapp.processEvents()
+
+    assert not panel.text_properties.isHidden()
+    assert panel.text_width.value() == float(layer.width)
+    assert panel.text_height.value() == float(layer.height)
+    assert panel.text_x.value() == 30
+    assert panel.text_y.value() == 40
+    assert panel.text_angle.value() == 0.0
+    assert panel.text_angle.isReadOnly()
+    assert not panel.text_link_button.isEnabled()
+    assert not panel.text_flip_h.isEnabled()
+    assert not panel.text_flip_v.isEnabled()
+    assert panel.transform_section.reset_button is not None
+    assert not panel.transform_section.reset_button.isEnabled()
+
+    panel.text_x.setValue(55)
+    panel.text_x.editingFinished.emit()
+    qapp.processEvents()
+    assert layer.offset_x == 55
+    assert document.undo()
+    qapp.processEvents()
+    assert layer.offset_x == 30
+
+    document.add_layer(name="Pixel", color=(0, 0, 0, 255), record=False)
+    panel.refresh()
+    assert panel.text_properties.isHidden()
+    panel.close()
+    panel.deleteLater()
+
+
+def test_text_properties_panel_edits_character(qapp):
+    from ui.properties_panel import PropertiesPanel
+
+    document = Document(200, 160, name="Text character")
+    layer = document.add_text_layer(
+        TextProperties("Aa", font_size=20, color=(10, 20, 30, 255)), record=False
+    )
+    panel = PropertiesPanel()
+    panel.bind_document(document)
+    panel.show()
+    qapp.processEvents()
+
+    assert panel.text_size.value() == 20
+    assert panel.text_style.currentData() == "regular"
+    assert panel.text_leading.currentText() == "(Auto)"
+    assert not panel.text_kerning.isEnabled()
+
+    panel.text_size.setValue(28)
+    panel.text_size.editingFinished.emit()
+    qapp.processEvents()
+    assert layer.text.font_size == 28
+
+    style_index = panel.text_style.findData("bold_italic")
+    assert style_index >= 0
+    panel.text_style.setCurrentIndex(style_index)
+    qapp.processEvents()
+    assert layer.text.bold and layer.text.italic
+
+    leading_index = panel.text_leading.findData(1.4)
+    assert leading_index >= 0
+    panel.text_leading.setCurrentIndex(leading_index)
+    qapp.processEvents()
+    assert layer.text.line_spacing == 1.4
+
+    panel.text_tracking.setValue(5)
+    panel.text_tracking.editingFinished.emit()
+    qapp.processEvents()
+    assert layer.text.letter_spacing == 5
+
+    assert panel.set_text_color(QColor(200, 60, 40, 128))
+    qapp.processEvents()
+    assert layer.text.color == (200, 60, 40, 128)
+    assert document.undo()
+    qapp.processEvents()
+    assert layer.text.color == (10, 20, 30, 255)
+    panel.close()
+    panel.deleteLater()
+
+
+def test_shape_properties_panel_shows_live_shape(qapp):
+    from ui.properties_panel import PropertiesPanel
+
+    document = Document(240, 180, name="Shape transform")
+    layer = document.add_shape_layer(
+        ShapeProperties(
+            width=80,
+            height=50,
+            fill_color=(10, 20, 30, 255),
+        ),
+        30,
+        40,
+        record=False,
+    )
+    panel = PropertiesPanel()
+    panel.bind_document(document)
+    panel.show()
+    qapp.processEvents()
+
+    assert not panel.shape_properties.isHidden()
+    assert panel.text_properties.isHidden()
+    assert panel.shape_kind_label.text() == "Hình chữ nhật"
+    assert panel.shape_width.value() == 80
+    assert panel.shape_height.value() == 50
+    assert panel.shape_x.value() == 30
+    assert panel.shape_y.value() == 40
+    assert panel.shape_link_button.isEnabled()
+    assert not panel.shape_link_button.isChecked()
+    assert panel.shape_fill_check.isChecked()
+    assert not panel.shape_stroke_button.isEnabled()
+    assert not panel.shape_stroke_style.isEnabled()
+    assert not panel.shape_corner_section.isHidden()
+    assert all(not button.isEnabled() for button in panel.shape_path_buttons)
+
+    panel.shape_width.setValue(100)
+    panel.shape_width.editingFinished.emit()
+    qapp.processEvents()
+    assert (layer.shape.width, layer.shape.height) == (100, 50)
+
+    panel.shape_link_button.setChecked(True)
+    panel.shape_height.setValue(60)
+    panel.shape_height.editingFinished.emit()
+    qapp.processEvents()
+    assert (layer.shape.width, layer.shape.height) == (120, 60)
+
+    panel.shape_x.setValue(44)
+    panel.shape_x.editingFinished.emit()
+    qapp.processEvents()
+    assert layer.offset_x == 44
+    assert document.undo()
+    qapp.processEvents()
+    assert layer.offset_x == 30
+
+    document.add_layer(name="Pixel", color=(0, 0, 0, 255), record=False)
+    panel.refresh()
+    assert panel.shape_properties.isHidden()
+    panel.close()
+    panel.deleteLater()
+
+
+def test_shape_properties_panel_edits_fill_and_corners(qapp):
+    from ui.properties_panel import PropertiesPanel
+
+    document = Document(240, 180, name="Shape appearance")
+    layer = document.add_shape_layer(
+        ShapeProperties(
+            width=120,
+            height=80,
+            fill_color=(10, 20, 30, 255),
+        ),
+        record=False,
+    )
+    panel = PropertiesPanel()
+    panel.bind_document(document)
+    panel.show()
+    qapp.processEvents()
+
+    panel.shape_fill_check.setChecked(False)
+    qapp.processEvents()
+    assert layer.shape.fill_color is None
+    assert layer.shape.stroke_width == 1
+    assert panel.shape_stroke_button.isEnabled()
+
+    assert panel.set_shape_fill_color(QColor(200, 60, 40, 128))
+    qapp.processEvents()
+    assert layer.shape.fill_color == (200, 60, 40, 128)
+    assert panel.shape_fill_check.isChecked()
+
+    assert panel.set_shape_stroke_color(QColor(255, 255, 255, 200))
+    qapp.processEvents()
+    assert layer.shape.stroke_color == (255, 255, 255, 200)
+
+    panel.shape_stroke_width.setValue(4)
+    panel.shape_stroke_width.editingFinished.emit()
+    qapp.processEvents()
+    assert layer.shape.stroke_width == 4
+
+    panel.shape_radius_link.setChecked(False)
+    panel.shape_radius_spins[0].setValue(12)
+    panel.shape_radius_spins[0].editingFinished.emit()
+    qapp.processEvents()
+    panel.shape_radius_spins[2].setValue(4)
+    panel.shape_radius_spins[2].editingFinished.emit()
+    qapp.processEvents()
+    assert layer.shape.kind == "rounded_rectangle"
+    assert layer.shape.corner_radii == (12.0, 0.0, 4.0, 0.0)
+    assert document.undo()
+    qapp.processEvents()
+    assert layer.shape.corner_radii == (12.0, 0.0, 0.0, 0.0)
+
+    panel.shape_radius_link.setChecked(True)
+    panel.shape_radius_spins[1].setValue(6)
+    panel.shape_radius_spins[1].editingFinished.emit()
+    qapp.processEvents()
+    assert layer.shape.corner_radii == (6.0, 6.0, 6.0, 6.0)
+
+    ellipse = document.add_shape_layer(
+        ShapeProperties(
+            kind="ellipse",
+            width=50,
+            height=30,
+            fill_color=(10, 20, 30, 255),
+        ),
+        record=False,
+    )
+    panel.refresh()
+    assert panel.shape_kind_label.text() == "Hình ellipse"
+    assert panel.shape_corner_section.isHidden()
+    assert ellipse.shape.kind == "ellipse"
+    panel.close()
+    panel.deleteLater()
+
+
 def test_text_layer_ui(qapp, tmp_path, monkeypatch):
     store = SettingsStore(tmp_path / "settings.json")
     window = MainWindow(store)
@@ -830,6 +1058,18 @@ def test_shape_dialog_preview(qapp):
     editing = ShapeDialog(properties=dialog.properties, editing=True)
     assert editing.kind_combo.currentData() == "rounded_rectangle"
     assert not editing.fill_check.isChecked()
+    editing.close()
+
+    per_corner = ShapeProperties(
+        kind="rounded_rectangle",
+        width=80,
+        height=60,
+        corner_radii=(10.0, 0.0, 4.0, 0.0),
+    )
+    editing = ShapeDialog(properties=per_corner, editing=True)
+    assert editing.properties == per_corner
+    editing.radius_spin.setValue(3.0)
+    assert editing.properties.corner_radii == (3.0, 3.0, 3.0, 3.0)
     editing.close()
     dialog.close()
 
@@ -1767,6 +2007,109 @@ def test_color_and_brush_size_shortcuts(qapp, tmp_path):
     assert view.brush_options()["size"] == 1
 
     assert window.action_delete_layer.shortcut().toString() == "Ctrl+Shift+Del"
+
+    window.tabs.removeTab(0)
+    window.close()
+
+
+def test_layer_context_menu_actions(qapp, tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    window = MainWindow(store)
+    window.resize(1280, 820)
+    window.show()
+    qapp.processEvents()
+
+    document = Document(40, 30, name="Context")
+    layer = document.add_layer(name="Pixel", color=(20, 40, 60, 255), record=False)
+    document.mark_clean()
+    window._add_document_tab(document)
+    qapp.processEvents()
+
+    menu = window.build_layer_context_menu(layer)
+    labels = [action.text() for action in menu.actions() if not action.isSeparator()]
+    for label in (
+        "Blending Options…",
+        "Edit Adjustment…",
+        "Copy CSS",
+        "Copy SVG",
+        "Duplicate Layer",
+        "Delete Layer",
+        "Group Layers",
+        "Quick Export as PNG",
+        "Export As…",
+        "Convert to Smart Object",
+        "Rasterize Layer",
+        "Merge Visible",
+        "Flatten Image",
+        "Red",
+        "No Color",
+    ):
+        assert label in labels
+    assert not any(action.text() == "Merge Visible" and action.isEnabled() for action in menu.actions())
+    assert any(action.text() == "Red" and action.isEnabled() for action in menu.actions())
+
+    window.action_copy_css.trigger()
+    qapp.processEvents()
+    clipboard = QApplication.clipboard().text()
+    assert clipboard.startswith(".layer-")
+    assert "width: 40px;" in clipboard
+
+    red = next(action for action in menu.actions() if action.text() == "Red")
+    red.trigger()
+    qapp.processEvents()
+    assert layer.color_label == "red"
+    item = window.layers_panel.layer_list.item(0)
+    assert item.data(ROLE_COLOR_LABEL) == "red"
+
+    document.file_path = str(tmp_path / "context.mps")
+    window.action_quick_export_png.trigger()
+    assert (tmp_path / "Pixel-export.png").exists()
+
+    window.action_convert_smart.trigger()
+    qapp.processEvents()
+    assert layer.kind == LayerKind.SMART
+    window.action_rasterize_layer.trigger()
+    qapp.processEvents()
+    assert layer.kind == LayerKind.PIXEL
+
+    window.tabs.removeTab(0)
+    window.close()
+
+
+def test_clipping_mask_ui(qapp, tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    window = MainWindow(store)
+    window.resize(1280, 820)
+    window.show()
+    qapp.processEvents()
+
+    document = Document(40, 30, name="Clipping UI")
+    base = document.add_layer(name="Base", color=(255, 0, 0, 255), record=False)
+    upper = document.add_layer(name="Upper", color=(0, 0, 255, 255), record=False)
+    document.mark_clean()
+    window._add_document_tab(document)
+    qapp.processEvents()
+
+    assert window.action_clipping_mask.isEnabled()
+    assert window.action_clipping_mask.text() == "Create Clipping Mask"
+    window.action_clipping_mask.trigger()
+    qapp.processEvents()
+    assert upper.clipping
+    item = window.layers_panel.layer_list.item(0)
+    assert bool(item.data(ROLE_CLIPPING))
+    assert "Clipping" in item.data(ROLE_SUBTITLE)
+    assert window.action_clipping_mask.text() == "Release Clipping Mask"
+
+    document.set_active_layer(base)
+    qapp.processEvents()
+    assert not window.action_clipping_mask.isEnabled()
+
+    document.set_active_layer(upper)
+    qapp.processEvents()
+    window.action_clipping_mask.trigger()
+    qapp.processEvents()
+    assert not upper.clipping
+    assert window.action_clipping_mask.text() == "Create Clipping Mask"
 
     window.tabs.removeTab(0)
     window.close()

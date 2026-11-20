@@ -121,7 +121,7 @@ có bản quyền của Adobe Photoshop.
 - Canvas Size (Ctrl+Alt+C): 9 điểm neo, dịch layer và vùng chọn theo neo.
 - Mọi thao tác trên đều có Undo/Redo.
 - Giai đoạn này dùng `.mps` phiên bản 2 (lưu kèm mask); định dạng hiện tại là phiên
-  bản 4, vẫn mở được dự án phiên bản 1–3.
+  bản 9, vẫn mở được dự án phiên bản 1–8.
 - Vùng chọn là trạng thái tạm của phiên làm việc, không lưu vào file dự án.
 
 ### Giai đoạn 3 — Xoay và lật
@@ -152,7 +152,7 @@ có bản quyền của Adobe Photoshop.
 - Khi layer văn bản có mask, cần áp hoặc xoá mask trước khi sửa nội dung.
 - Resize/xoay/lật tự rasterize văn bản; crop và canvas size giữ nguyên khả năng chỉnh sửa.
 - Giai đoạn này dùng `.mps` phiên bản 3 (lưu thuộc tính văn bản); định dạng hiện tại là
-  phiên bản 4, vẫn mở được dự án phiên bản 1–3.
+  phiên bản 9, vẫn mở được dự án phiên bản 1–8.
 - Giới hạn an toàn: 10.000 ký tự, 500 dòng, font 1..1000 px, render tối đa 64 MP.
 
 ### Giai đoạn 5 — Bộ lọc và hiệu ứng
@@ -350,8 +350,8 @@ có bản quyền của Adobe Photoshop.
 - Các thao tác phá huỷ bị chặn với thông báo rõ ràng: vẽ cọ/gradient lên pixel, áp bộ
   lọc, xoay/lật layer. Muốn áp vĩnh viễn hãy dùng Merge Down hoặc Flatten Image.
 - `.mps` v4 lưu `kind: "adjustment"` kèm tham số; dự án cũ mở bình thường.
-- Giới hạn hiện tại: chưa có Curves/Levels riêng cho từng kênh màu; bản tổng hợp ba
-  kênh có ở phần 12, tách kênh và histogram ở phần 13.
+- Giới hạn: Color Balance chưa cân bằng riêng từng kênh R/G/B; Curves RGB tổng hợp có
+  ở phần 12, Curves tách kênh R/G/B và histogram ở phần 13.
 
 ### Giai đoạn 6 — Mask cho layer điều chỉnh (phần 11)
 - Layer điều chỉnh nhận **mask cấp tài liệu**: mask có đúng kích thước canvas và giới
@@ -549,6 +549,106 @@ có bản quyền của Adobe Photoshop.
   bộ sau mỗi lần sửa; chữ đang gõ trên canvas tạm dùng composite toàn ảnh; chưa có
   composite đa luồng hoặc lưu cache ra đĩa.
 
+### Bổ sung v0.26.0 — Clipboard, khoá layer, Eyedropper và xuất ảnh
+- **Menu Edit đầy đủ**: Cut (Ctrl+X), Copy (Ctrl+C), Copy Merged (Ctrl+Shift+C), Paste
+  (Ctrl+V), Clear (Delete), Fill with Foreground Color (Alt+Backspace) và Fill with
+  Background Color (Ctrl+Backspace).
+  - Copy/Cut lấy pixel của layer đang chọn, giới hạn theo vùng chọn (alpha nhân với
+    mask vùng chọn); Copy Merged lấy ảnh ghép toàn tài liệu. Ảnh đồng thời được đặt
+    vào clipboard hệ thống nên dán được sang ứng dụng khác.
+  - Paste tạo layer mới: dán từ clipboard nội bộ giữ đúng toạ độ gốc, dán từ ứng dụng
+    khác đặt giữa canvas. Mọi thao tác đều có Undo/Redo.
+  - Clear và Fill chỉ áp dụng cho layer ảnh (pixel) đang chọn, tôn trọng vùng chọn;
+    không có vùng chọn thì áp cho toàn layer. Layer bị khoá hoặc layer văn bản/hình
+    khối/nhóm được báo phải rasterize trước.
+- **Khoá layer**: thuộc tính `locked` lưu trong `.mps`; nút ổ khoá trên panel Layers
+  (icon đóng/mở), menu Layer ▸ Lock/Unlock Layer (Ctrl+/). Layer bị khoá chặn vẽ, tẩy,
+  gradient, bộ lọc và biến đổi; thao tác khoá/mở khoá có Undo/Redo.
+- **Eyedropper (I)**: nhấp hoặc kéo để hút màu từ ảnh ghép vào Foreground, Alt+Click
+  lấy màu Background; trạng thái hiển thị mã hex, RGB và alpha của điểm lấy mẫu.
+- **Phím tắt màu và cỡ cọ**: X hoán đổi Foreground/Background, D trả về trắng/đen mặc
+  định; `[` / `]` giảm/tăng cỡ Brush/Eraser theo bậc 1, 10, 25, 50, 100 px và Options
+  Bar cập nhật ngay.
+- **Xuất ảnh**: hộp thoại hỏi chất lượng 1..100 khi xuất JPEG/WebP và ghi nhớ cho lần
+  sau (lưu trong cấu hình); PNG/JPEG/TIFF ghi kèm DPI của tài liệu.
+- **Nhập ảnh**: ảnh xám 16-bit (PNG/TIFF, mode I;16) và TIFF số thực (mode F/I) được
+  co đúng về 8-bit theo dải thực tế thay vì bị cắt thành trắng.
+- **Log xoay vòng**: file log tự cắt ở 2 MB và giữ 3 bản cũ cạnh cấu hình.
+
+### Bổ sung v0.27.0 — Clipping Mask
+- **Layer ▸ Create Clipping Mask** (Ctrl+Alt+G) cắt layer đang chọn theo vùng có nội
+  dung của layer nền nằm ngay bên dưới trong cùng nhóm; chọn lại **Release Clipping
+  Mask** (cùng phím tắt) để bỏ cắt. Action tự đổi nhãn và tự tắt khi không có nền hợp lệ.
+- Nền có thể là layer pixel, văn bản, hình khối, layer tô hoặc nhóm; alpha của nền lấy
+  theo offset, opacity và layer mask (nhóm dùng alpha ghép của toàn cây con). Nhiều
+  layer clipping liên tiếp dùng chung một nền; các layer bên dưới nền không làm lộ phần
+  bị cắt.
+- Panel Layers vẽ mũi tên clipping, thụt lề layer bị cắt và thêm phụ đề "Clipping";
+  tooltip giải thích nền đang dùng.
+- Mỗi lần tạo/giải phóng là một bước Undo/Redo; thuộc tính `clipping` được lưu trong
+  `.mps` từ v7 (file cũ mở bình thường, cờ clipping mồ côi được tự bỏ khi nạp).
+
+### Bổ sung v0.28.0 — Menu chuột phải cho layer
+- **Menu ngữ cảnh trên panel Layers**: nhấp chuột phải vào layer để mở menu đúng thứ tự
+  quen thuộc. Layer được chọn ngay khi mở menu và trạng thái các action được cập nhật
+  theo loại layer.
+- **Mục hoạt động**: Blending Options…, Edit Adjustment…, Copy CSS, Copy SVG, Duplicate
+  Layer, Delete Layer, Group Layers, Quick Export as PNG, Export As…, Convert to Smart
+  Object, Rasterize Layer, bật/tắt Layer Mask, Create/Release Clipping Mask, Copy/Paste
+  Shape Attributes, Merge Visible, Flatten Image và 8 nhãn màu (No Color, Red, Orange,
+  Yellow, Green, Blue, Violet, Gray). Nhãn màu có dấu chấm màu bên phải panel và lưu
+  trong dự án.
+- **Blending Options…**: hộp thoại chỉnh chế độ hoà trộn và opacity (0–100 %), áp dụng
+  trong một bước Undo; layer điều chỉnh chỉ cho đổi opacity.
+- **Copy CSS / Copy SVG**: sinh mã cho layer đang chọn rồi đưa vào clipboard. CSS gồm
+  vị trí, kích thước, opacity, blend mode và thuộc tính văn bản/hình khối/tô; các loại
+  khác dùng ảnh PNG nhúng base64. SVG là ảnh nhúng tự chứa, có kích thước tài liệu.
+- **Quick Export as PNG**: xuất nhanh layer đang chọn thành PNG cùng thư mục với dự án
+  (hoặc `Pictures`/thư mục gần nhất khi chưa lưu), tự thêm `-2`, `-3`… khi trùng tên.
+- **Merge Visible**: gộp mọi layer gốc đang hiện thành một layer "Merged", giữ nguyên
+  các layer ẩn; một bước Undo.
+- **Convert to Smart Object / Rasterize Layer**: chuyển layer pixel/văn bản/hình khối/tô
+  thành smart object (fill được render theo kích thước canvas) và rasterize ngược lại
+  theo đúng loại layer; có kiểm tra loại layer và layer mask.
+- **Mục chưa hỗ trợ** được hiển thị mờ kèm tooltip giải thích: Artboard/Frame, layer
+  style (Copy/Paste/Clear Layer Style, Rasterize Layer Style), vector mask, Link
+  Layers/Select Linked Layers, Release from Isolation, Merge Layers (mô hình chọn một
+  layer), Postcard và 3D Extrusion.
+- **`.mps` v8** (lịch sử): mỗi layer lưu thêm `color_label`; file cũ mở với "none",
+  giá trị lạ bị chuẩn hoá khi nạp.
+
+### Bổ sung v0.29.0 — Properties cho layer văn bản
+- Khi chọn layer văn bản, panel Properties hiển thị mục **Type Layer** với hai nhóm
+  thu gọn được: **Transform** và **Character**. Panel cuộn được nên không chiếm chỗ
+  của panel Layers.
+- **Transform**: hiển thị W/H hiện tại, sửa trực tiếp X/Y (có Undo), nút khoá tỉ lệ,
+  góc xoay, lật ngang/dọc và đặt lại transform. Các nút chưa hỗ trợ biến đổi văn bản
+  không phá huỷ được để mờ kèm tooltip hướng dẫn dùng Edit ▸ Transform (sẽ rasterize);
+  riêng X/Y hoạt động đầy đủ.
+- **Character**: chọn font, kiểu Regular/Bold/Italic/Bold Italic, cỡ chữ, giãn dòng
+  (Auto/0,5..5,0×), tracking và màu RGBA; mọi thay đổi áp cho toàn bộ văn bản, render
+  lại ngay và ghi một bước Undo.
+- **Kerning** cấp layer chưa hỗ trợ nên để mờ kèm tooltip; kerning theo cặp ký tự vẫn
+  chỉnh trong Type ▸ Edit Text…. Định dạng từng đoạn vẫn giữ nguyên khi sửa các trường
+  cấp layer (font/cỡ/màu được áp cho mọi đoạn).
+- Đổi W/H trực tiếp chưa hỗ trợ vì kích thước do nội dung và cỡ chữ quyết định; dùng
+  cỡ chữ hoặc Image Size để thay đổi.
+
+### Bổ sung v0.30.0 — Live Shape Properties
+- Khi chọn layer hình khối, panel Properties hiển thị mục **Live Shape Properties**;
+  panel cuộn được và tự ẩn khi chọn layer loại khác.
+- **Kích thước/vị trí**: sửa trực tiếp W/H, nút khoá tỉ lệ giữ đúng tỉ lệ khi đổi một
+  cạnh; sửa X/Y có Undo như layer thường.
+- **Tô và viền**: bật/tắt tô, chọn màu tô và màu viền RGBA, đổi độ dày viền; tắt tô khi
+  chưa có viền sẽ tự bật viền 1 px để hình không biến mất.
+- **Bo góc riêng 4 góc** (TL/TR/BR/BL) với nút nối: bật để bo đều, tắt để bo từng góc.
+  Hình chữ nhật có bo góc tự chuyển sang kiểu bo góc; mọi thay đổi render lại ngay và
+  ghi một bước Undo.
+- Kiểu nét đứt/chấm và bốn thao tác nhiều đường dẫn (Hợp/Trừ/Giao/Loại) hiển thị mờ
+  kèm tooltip vì mô hình hiện chỉ render một đường dẫn nét liền.
+- **`.mps` v9**: layer hình khối lưu thêm `corner_radii`; dự án phiên bản 1–8 vẫn mở
+  được, giá trị bo góc cũ được chuyển thành bốn góc bằng nhau.
+
 ## 2. Chạy ứng dụng
 
 ### Cách nhanh nhất
@@ -602,6 +702,33 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-modern.txt
 .\.venv\Scripts\python.exe main.py
 ```
 
+### Đóng gói bản portable (PyInstaller)
+
+Bản portable là một thư mục tự chứa, chạy trên Windows 10/11 64-bit mà không cần cài
+Python. Trong PowerShell tại thư mục dự án:
+
+```powershell
+uv pip install --python .venv310qt5\Scripts\python.exe -r requirements-build.txt
+.\build_portable.bat
+```
+
+Script làm ba bước: sinh `assets/app_icon.png` từ icon vẽ bằng QPainter, đóng gói
+one-folder bằng `MyPhotoStudio.spec` (không mở cửa sổ console) rồi nén thành zip.
+Kết quả:
+
+- `dist\MyPhotoStudio\MyPhotoStudio.exe` — chạy trực tiếp trong thư mục này.
+- `dist\MyPhotoStudio-portable-<phiên bản>.zip` — bản gửi/nhân bản sang máy khác.
+
+Phải chép hoặc giải nén **cả thư mục** vì `_internal\` chứa Qt, NumPy, Pillow và QSS
+theme. Cấu hình, preset SQLite và log vẫn nằm ở `%APPDATA%\MyPhotoStudio`, không ghi
+vào thư mục chương trình. Spec tự chọn PySide2 hay PySide6 theo venv đang build, cùng
+quy tắc với `compat/qt.py`.
+
+Đã kiểm chứng trên máy này: build bằng PySide2 5.15.2.1, thư mục ~160 MB / zip ~61 MB;
+exe chạy từ `dist` và từ bản zip giải nén đều mở cửa sổ ổn định và log ghi đúng
+phiên bản 0.27.0. Bản 0.30.0 cần chạy lại `build_portable.bat` để tạo zip mới.
+
+
 ## 3. Phím tắt và thao tác
 
 | Thao tác | Cách dùng |
@@ -610,9 +737,12 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-modern.txt
 | Mở file | Ctrl+O |
 | Lưu dự án | Ctrl+S |
 | Lưu thành dự án mới | Ctrl+Shift+S |
-| Xuất ảnh | Ctrl+Alt+S |
+| Xuất ảnh | Ctrl+Alt+S (JPEG/WebP hỏi chất lượng) |
 | Đóng tài liệu | Ctrl+W |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z (hoặc Ctrl+Y) |
+| Cắt / Sao chép / Sao chép ảnh ghép / Dán | Ctrl+X / Ctrl+C / Ctrl+Shift+C / Ctrl+V |
+| Xoá pixel trong vùng chọn (hoặc cả layer) | Delete |
+| Tô màu Foreground / Background | Alt+Backspace / Ctrl+Backspace |
 | Chọn toàn bộ / Bỏ chọn | Ctrl+A / Ctrl+D |
 | Đảo vùng chọn | Ctrl+Shift+I |
 | Feather vùng chọn | Shift+F6, hoặc ô Feather trên Options Bar |
@@ -629,6 +759,7 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-modern.txt
 | Xoay layer tự do | Menu Edit ▸ Transform ▸ Rotate… |
 | Layer mới | Ctrl+Shift+N |
 | Nhóm layer đang chọn / Bỏ nhóm | Ctrl+G / Ctrl+Shift+G |
+| Tạo / giải phóng Clipping Mask | Ctrl+Alt+G hoặc menu Layer |
 | Tạo layer văn bản | Ctrl+Shift+T |
 | Giãn dòng / giãn chữ | Trong hộp thoại Text, hàng "Giãn dòng / chữ" |
 | Định dạng theo đoạn chữ | Trong hộp thoại Text: bôi đen đoạn rồi đổi Font/Cỡ/Màu/Đậm/Nghiêng |
@@ -656,6 +787,8 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-modern.txt
 | Gaussian Blur / Unsharp Mask | Menu Filter ▸ Blur / Sharpen |
 | Nhân bản layer | Ctrl+J |
 | Đổi tên layer | F2 |
+| Khoá / mở khoá layer | Ctrl+/ hoặc nút ổ khoá trên panel Layers |
+| Xoá layer | Ctrl+Shift+Delete |
 | Merge Down / Flatten | Ctrl+E / Ctrl+Shift+E |
 | Zoom In / Out | Ctrl+= / Ctrl+- |
 | Fit on Screen / 100% | Ctrl+0 / Ctrl+1 |
@@ -663,7 +796,10 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-modern.txt
 | Di chuyển khung nhìn | Giữ Space và kéo, hoặc kéo bằng chuột giữa |
 | Zoom tại con trỏ | Lăn chuột |
 | Pan ngang | Shift + lăn chuột |
-| Công cụ Move / Rect / Ellipse / Lasso / Wand / Quick Select / Crop / Text / Shape / Brush / Gradient / Eraser / Hand / Zoom | V / M / E / L / W / Shift+W / C / T / U / B / G / Shift+E / H / Z khi canvas đang focus |
+| Hút màu | Công cụ Eyedropper (I), Alt+Click lấy màu Background |
+| Hoán đổi / đặt lại màu Foreground–Background | X / D khi canvas đang focus |
+| Tăng / giảm cỡ cọ | ] / [ khi canvas đang focus (Brush/Eraser) |
+| Công cụ Move / Rect / Ellipse / Lasso / Wand / Quick Select / Crop / Text / Shape / Brush / Gradient / Eraser / Eyedropper / Hand / Zoom | V / M / E / L / W / Shift+W / C / T / U / B / G / Shift+E / I / H / Z khi canvas đang focus |
 
 Gõ văn bản trong ô nhập sẽ không bị các phím tắt một chữ cái cướp mất.
 
@@ -676,10 +812,10 @@ cd D:\python\myphoto
 .\.venv310qt5\Scripts\python.exe -m pytest -q
 ```
 
-Kết quả đã kiểm tra:
+Kết quả đã kiểm tra (2026-11-20):
 
-- PySide2 5.15.2.1: **519 passed**
-- PySide6 6.3.2 (offscreen): **519 passed**
+- PySide2 5.15.2.1 + Python 3.10.22 (chạy thật trên máy): **566 passed**
+- PySide6 6.12.0 + Python 3.12.16 (offscreen, NumPy 2.5.5): **566 passed**
 
 Tạo lại ảnh xem trước giao diện:
 
@@ -776,8 +912,11 @@ Tạo lại ảnh xem trước giao diện:
 myphoto/
 ├── main.py                     # điểm khởi chạy
 ├── run.bat                     # chạy nhanh trên Windows
+├── build_portable.bat          # đóng gói portable (PyInstaller + zip)
+├── MyPhotoStudio.spec          # cấu hình PyInstaller
 ├── requirements.txt            # bộ thư viện cho Windows 10 build cũ
 ├── requirements-modern.txt     # bộ thư viện cho Windows mới
+├── requirements-build.txt      # PyInstaller cho bước đóng gói
 ├── conftest.py                 # cấu hình pytest + Qt offscreen
 ├── compat/qt.py                # tự chọn PySide2 hoặc PySide6
 ├── config/settings.py          # hằng số, đường dẫn, lưu cấu hình JSON
@@ -798,15 +937,17 @@ myphoto/
 │   ├── tiles.py                # cache ô 256 × 256 LRU và đồng bộ dirty rect
 │   ├── command_manager.py      # Command Pattern (layer, mask, geometry, transform)
 │   ├── history_manager.py      # Undo/Redo stack
-│   └── color_manager.py        # màu foreground/background
+│   └── color_manager.py        # màu foreground/background, hoán đổi, màu mặc định
 ├── formats/
-│   ├── import_manager.py       # đọc ảnh bằng Pillow
-│   ├── export_manager.py       # xuất ảnh
-│   └── native_project.py       # định dạng .mps v6
-├── tools/                      # Move, chọn, Crop, Text, Shape, Brush, Eraser, Gradient, Hand, Zoom
+│   ├── import_manager.py       # đọc ảnh bằng Pillow, gồm ảnh xám 16-bit/float
+│   ├── export_manager.py       # xuất ảnh, chất lượng JPEG/WebP, DPI
+│   └── native_project.py       # định dạng .mps v9
+├── tools/                      # Move, chọn, Crop, Text, Shape, Brush, Eraser, Gradient,
+│                               # Eyedropper, Hand, Zoom + preview_screenshots.py,
+│                               # make_app_icon.py
 ├── ui/                         # main window, canvas, panels, theme, icons, dialogs
 ├── assets/themes/              # dark.qss, light.qss
-├── tests/                      # 519 bài kiểm thử
+├── tests/                      # 566 bài kiểm thử
 └── artifacts/                  # ảnh xem trước giao diện
 ```
 
@@ -815,12 +956,20 @@ myphoto/
 Các mục dưới đây **chưa được triển khai**, không có nút giả:
 
 - Chỉnh vector bằng tay nắm/đường dẫn.
+- Nét đứt/chấm, canh chỉnh nét và thao tác nhiều đường dẫn (Hợp/Trừ/Giao/Loại) trong
+  một layer hình khối; các mục này để mờ kèm tooltip.
 - Xem mask như một kênh riêng (Channels) và lưu vùng chọn vào file dự án.
 - Rich text nâng cao còn lại: đường dẫn tuỳ ý do người dùng vẽ (đã có cung tròn,
   vòng tròn, lượn sóng, chữ S và kerning cặp).
 - Bộ lọc nâng cao: blur theo hướng/chuyển động, radial blur, noise, vignette,
   lens correction và bộ lọc tuỳ biến.
 - Hiệu ứng layer (glow, drop shadow, bevel), smart filter không phá huỷ.
+- Biến đổi văn bản không phá huỷ trực tiếp trong panel Properties (sửa W/H, xoay, lật,
+  đặt lại transform); các nút này để mờ kèm tooltip, X/Y vẫn sửa được.
+- Artboard/Frame, vector mask, liên kết layer, isolation mode, Postcard và 3D
+  extrusion; các mục này nằm trong menu chuột phải ở trạng thái mờ kèm tooltip.
+- Chọn và thao tác đồng thời nhiều layer (Merge Layers, link nhóm layer); hiện mỗi lần
+  chỉ chọn một layer.
 - Tách nền/loại bỏ vật thể bằng AI; nếu triển khai sẽ ưu tiên xử lý offline, có công
   tắc bật/tắt và hiển thị tiến trình.
 - Plugin hệ thống và script tuỳ biến (ứng dụng luôn từ chối chạy mã lạ).
@@ -839,7 +988,7 @@ thông báo mà không xử lý.
 | 4 | Layer văn bản (đã xong) |
 | 5 | Bộ lọc cơ bản: brightness/contrast, hue/saturation, auto contrast, invert, desaturate, Gaussian blur, unsharp mask (đã xong); tiếp theo: hiệu ứng nâng cao, tách nền |
 | 6 | Shape/vector cơ bản, Brush/Eraser, Gradient, feather/anti-alias, Lasso/Magic Wand/Quick Selection, Quick Mask, giãn dòng/giãn chữ, định dạng font/cỡ/màu theo từng đoạn chữ, uốn chữ, gõ chữ trực tiếp trên canvas, layer điều chỉnh không phá huỷ, mask cho layer điều chỉnh, Levels/Curves/Color Balance, Curves tách kênh + histogram + eyedropper, layer group, chữ trên đường dẫn + kerning cặp, layer fill + smart object, Auto Levels + kéo điểm đen/trắng trên histogram, automation batch/action + thư viện preset SQLite, tối ưu hiệu năng tile/lazy loading cho ảnh lớn (đã xong) |
-| 7 | Kiểm thử toàn diện, đóng gói và phát hành |
+| 7 | Kiểm thử toàn diện, đóng gói và phát hành (bản portable PyInstaller đã có; còn bộ cài, ký số) |
 
 ## 8. Quyền riêng tư và an toàn dữ liệu
 
