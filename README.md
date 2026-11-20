@@ -71,9 +71,15 @@ có bản quyền của Adobe Photoshop.
 
 ![Layer group lồng nhau: opacity/blend/mask áp lên cả nhóm và panel Layers phân cấp](artifacts/phase6_layer_groups.png)
 
+![Chọn nhiều layer bằng Shift/Ctrl: ba layer Huy hiệu cùng được tô sáng để thao tác hàng loạt](artifacts/phase6_layer_multi_select.png)
+
 ![Chữ trên đường dẫn: cung tròn, vòng tròn, lượn sóng, chữ S và kerning cặp thủ công](artifacts/phase6_text_path.png)
 
 ![Hộp thoại văn bản với ô Kerning cặp và kiểu chữ trên đường dẫn](artifacts/phase6_text_path_dialog.png)
+
+![Layer Style: Drop Shadow, Bevel & Emboss, Stroke và Gradient Overlay áp thật lên layer](artifacts/phase6_layer_style.png)
+
+![Hộp thoại Layer Style (Blending Options) giống bố cục tham chiếu kèm xem trước trực tiếp](artifacts/phase6_layer_style_dialog.png)
 
 ![Layer tô gradient và smart object xoay/thu nhỏ không phá huỷ trên cùng tài liệu](artifacts/phase6_fill_smart.png)
 
@@ -88,6 +94,10 @@ có bản quyền của Adobe Photoshop.
 ![Hộp thoại Levels mở thư viện preset SQLite, đã áp preset "Ấm hoàng hôn"](artifacts/phase6_preset_library.png)
 
 ![Tài liệu 3600 × 2400 xem ở 100%: canvas chỉ composite các ô 256 × 256 trong khung nhìn](artifacts/phase6_tiles.png)
+
+![Mở file PSD của Photoshop: giữ layer, nhóm, mask, blend mode, opacity và chuyển live shape thành layer hình khối](artifacts/phase6_psd_open.png)
+
+![Layer chữ trong PSD mở thành văn bản chỉnh sửa được, panel Properties hiện Type Layer](artifacts/phase6_psd_text.png)
 
 ## 1. Đã làm được gì
 
@@ -598,8 +608,8 @@ có bản quyền của Adobe Photoshop.
   Shape Attributes, Merge Visible, Flatten Image và 8 nhãn màu (No Color, Red, Orange,
   Yellow, Green, Blue, Violet, Gray). Nhãn màu có dấu chấm màu bên phải panel và lưu
   trong dự án.
-- **Blending Options…**: hộp thoại chỉnh chế độ hoà trộn và opacity (0–100 %), áp dụng
-  trong một bước Undo; layer điều chỉnh chỉ cho đổi opacity.
+- **Blending Options…**: mở hộp thoại Layer Style đầy đủ (xem v0.36.0 bên dưới); với
+  layer nhóm/điều chỉnh chỉ áp blend mode và opacity trong một bước Undo.
 - **Copy CSS / Copy SVG**: sinh mã cho layer đang chọn rồi đưa vào clipboard. CSS gồm
   vị trí, kích thước, opacity, blend mode và thuộc tính văn bản/hình khối/tô; các loại
   khác dùng ảnh PNG nhúng base64. SVG là ảnh nhúng tự chứa, có kích thước tài liệu.
@@ -610,10 +620,10 @@ có bản quyền của Adobe Photoshop.
 - **Convert to Smart Object / Rasterize Layer**: chuyển layer pixel/văn bản/hình khối/tô
   thành smart object (fill được render theo kích thước canvas) và rasterize ngược lại
   theo đúng loại layer; có kiểm tra loại layer và layer mask.
-- **Mục chưa hỗ trợ** được hiển thị mờ kèm tooltip giải thích: Artboard/Frame, layer
-  style (Copy/Paste/Clear Layer Style, Rasterize Layer Style), vector mask, Link
-  Layers/Select Linked Layers, Release from Isolation, Merge Layers (mô hình chọn một
-  layer), Postcard và 3D Extrusion.
+- **Mục chưa hỗ trợ** được hiển thị mờ kèm tooltip giải thích: Artboard/Frame,
+  Copy/Paste/Clear Layer Style và Rasterize Layer Style (bản thân Layer Style đã dựng
+  được qua hộp thoại ở v0.36.0), vector mask, Link Layers/Select Linked Layers,
+  Release from Isolation, Postcard và 3D Extrusion.
 - **`.mps` v8** (lịch sử): mỗi layer lưu thêm `color_label`; file cũ mở với "none",
   giá trị lạ bị chuẩn hoá khi nạp.
 
@@ -648,6 +658,136 @@ có bản quyền của Adobe Photoshop.
   kèm tooltip vì mô hình hiện chỉ render một đường dẫn nét liền.
 - **`.mps` v9**: layer hình khối lưu thêm `corner_radii`; dự án phiên bản 1–8 vẫn mở
   được, giá trị bo góc cũ được chuyển thành bốn góc bằng nhau.
+
+### Bổ sung v0.31.0 — Mở file PSD của Photoshop
+- File ▸ Open… nhận thêm `*.psd` (PSD v1, RGB hoặc Grayscale 8-bit). Bộ đọc viết độc
+  lập theo tài liệu định dạng công khai của Adobe, không dùng mã nguồn, logo hay tài
+  sản nào của Adobe.
+- Giữ nguyên layer pixel, thứ tự và phân cấp nhóm, vị trí/kích thước, opacity, blend
+  mode (15 chế độ ánh xạ từ khoá PSD), clipping mask, layer mask (kể cả mask của nhóm,
+  mask đảo và mask đang tắt), nhãn màu và trạng thái ẩn/khoá.
+- Đọc được cả dữ liệu raw, RLE và ZIP; đọc DPI từ image resources; PSD chỉ có ảnh hợp
+  nhất (flattened) mở thành một layer "Ảnh PSD".
+- **Layer hình khối vector (live shape)** dạng chữ nhật, chữ nhật bo góc hoặc ellipse
+  được chuyển thành layer hình khối chỉnh sửa được: đọc dữ liệu `vogk` để lấy hình
+  học, bán kính bo góc và viền, lấy màu tô đặc từ pixel của layer. Mở xong có thể sửa
+  ngay W/H, X/Y, màu tô, viền và bo góc trong Properties. Hình tô gradient/ảnh, hình
+  tự do nhiều đường dẫn hoặc hình có hiệu ứng không chuyển được thì giữ nguyên dạng
+  layer pixel để không mất dữ liệu.
+- Layer smart object và layer điều chỉnh chưa nhập được vì cần renderer
+  riêng; nếu file có kênh alpha của ảnh hợp nhất, ảnh hợp nhất được thêm dưới dạng
+  layer ẩn "Ảnh hợp nhất PSD". Hộp thoại báo cáo liệt kê layer bị bỏ qua, blend mode
+  không nhận diện, layer style/vector mask bị bỏ — không im lặng mất dữ liệu.
+- File gốc luôn chỉ đọc: tài liệu mở ở trạng thái sạch và không có đường dẫn ghi đè;
+  muốn giữ chỉnh sửa thì lưu thành `.mps` hoặc xuất ảnh mới.
+- Giới hạn an toàn: tối đa 500 layer, 2 GB, 250 triệu pixel giải mã. PSB (PSD v2),
+  ảnh 16/32-bit và CMYK báo lỗi rõ ràng thay vì mở sai dữ liệu.
+
+### Bổ sung v0.32.0 — Mở layer hình khối vector từ PSD
+- `vogk` của Photoshop được giải mã bằng bộ đọc descriptor nội bộ (Objc, VlLs, doub,
+  UntF, bool, enum, TEXT, alis…); hình chữ nhật, chữ nhật bo góc và ellipse trở thành
+  layer hình khối có thể chỉnh sửa tiếp thay vì layer pixel.
+- Giữ vị trí, kích thước, bán kính bo góc, màu viền/độ dày viền, layer mask, clipping,
+  blend mode, opacity và nhóm của layer gốc. Màu tô đặc được lấy từ pixel gốc (bỏ qua
+  dải viền) nên hình có viền vẫn nhận đúng màu tô bên trong.
+- Hình tô gradient/ảnh hoặc hình vector tự do không biểu diễn được bằng mô hình hình
+  khối hiện tại sẽ tự động giữ dạng layer pixel, không im lặng làm mất nội dung.
+- Báo cáo nhập có thêm số layer hình khối đã chuyển; ảnh xem trước
+  `artifacts/phase6_psd_open.png` minh hoạ thẻ bo góc mở thành Live Shape.
+
+### Bổ sung v0.33.0 — Nhập chữ nhật từ PSD thật (vogk + vmsk)
+- Bộ đọc descriptor chấp nhận cách Photoshop ghi khoá/class 4 ký tự bằng marker độ
+  dài 0 rồi 4 byte thô, và tự chọn đúng vị trí descriptor khi `vogk` có thêm trường
+  phiên bản phụ trước dữ liệu.
+- Nhiều file Photoshop chỉ lưu `vogk` dạng origin + bounding box, không có khoá
+  `rect`/`roundRect`/`ellipse`; khi đó app đọc alpha mask của layer có vector mask
+  (`vmsk`) để nhận diện hình chữ nhật, chữ nhật bo góc hoặc ellipse, lấy vị trí/kích
+  thước chính xác và màu tô đặc từ pixel gốc.
+- Nhờ vậy file như `Untitled-1.psd` (2 layer chữ nhật đen/đỏ) mở thành 2 layer hình
+  chữ nhật chỉnh sửa được thay vì layer pixel. Mask phức tạp, hình gradient hoặc layer
+  văn bản/smart object vẫn giữ dạng pixel như trước.
+- Sửa cả cách đọc ảnh hợp nhất nén RLE: PSD thật lưu bảng độ dài của mọi dòng thuộc
+  mọi kênh liền nhau trước phần dữ liệu, nên file không còn báo nhầm "ảnh hợp nhất bị
+  hỏng".
+- Kiểm thử tăng lên **593 bài** (thêm descriptor kiểu Photoshop thật, suy luận
+  chữ nhật/ellipse/bo góc từ mask, trường hợp không có `vmsk` và hai cách bố trí
+  bảng RLE của ảnh hợp nhất).
+
+### Bổ sung v0.34.0 — Giữ layer văn bản PSD dưới dạng chữ chỉnh sửa tiếp
+- Bộ đọc PSD giải mã tagged block `TySh` (Type tool object setting): hình biến đổi
+  6 số, nội dung chữ, căn lề, chạy định dạng theo đoạn (`StyleRun`/`RunArray`),
+  font, cỡ chữ, màu, đậm/nghiêng/giả lập, tracking, leading, giãn ngang/dọc, gạch
+  chân/gạch ngang và dữ liệu `EngineData` (FontSet, nội dung gốc).
+- Layer chữ được tạo bằng mô hình văn bản sẵn có (`LayerKind.TEXT` +
+  `TextProperties`/`TextRun`) nên mở xong sửa được nội dung, font, cỡ, màu, căn lề,
+  giãn dòng/chữ và uốn chữ ngay trong app. Pixel gốc của PSD vẫn được giữ làm hình
+  hiển thị ban đầu để không lệch bố cục.
+- Cỡ chữ quy đổi theo DPI của file (point × DPI / 72); tracking PSD đổi sang
+  letter-spacing pixel; leading đổi sang bội chiều cao dòng; warpStyle/warpValue
+  ánh xạ sang kiểu uốn và độ uốn sẵn có.
+- Giữ nguyên mask, clipping, blend mode, opacity, nhãn và nhóm của layer gốc. Văn
+  bản dọc, file thiếu `TySh`, dữ liệu chữ hỏng hoặc rỗng sẽ giữ dạng layer pixel
+  kèm cảnh báo trong báo cáo nhập, không làm mất nội dung.
+- Báo cáo nhập và thông báo mở file có thêm số layer chữ đã chuyển.
+- Khi descriptor chữ không có `StyleRun` (một số bản Photoshop), style được đọc
+  từ `EngineData`: FontSet (tên font UTF-16), cỡ chữ pixel, màu ARGB, tracking,
+  leading, co giãn và căn lề theo ParagraphRun; như vậy file thật vẫn giữ đúng
+  font, cỡ và màu chứ không rơi về mặc định.
+- Kiểm thử tăng lên **601 bài** (văn bản cơ bản, nhiều run + FontSet + DPI, căn
+  lề/tracking/warp/cảnh báo, style chỉ có trong EngineData, nhiều run font từ
+  EngineData, văn bản dọc giữ pixel, TySh hỏng giữ pixel, giữ nhóm và mask).
+
+### Bổ sung v0.35.0 — Chọn nhiều layer bằng Shift/Ctrl
+- Panel Layers chuyển sang chế độ chọn mở rộng: **giữ Shift + nhấp** để chọn một
+  dải layer liên tiếp, **Ctrl + nhấp** để bật/tắt từng layer; nhấp thường chọn lại
+  một layer. Phím mũi tên có Shift/Ctrl cũng hoạt động như danh sách chuẩn của Qt.
+- Tài liệu lưu cả tập layer đang chọn lẫn "layer dẫn" (layer nhấp sau cùng). Layer
+  dẫn quyết định thông số hiển thị trên panel; vùng chọn được giữ khi panel vẽ lại,
+  khi đổi visibility/blend hoặc khi kéo thả đổi thứ tự.
+- Các thao tác áp dụng cho toàn bộ vùng chọn và gói trong **một bước Undo**: xoá
+  (nhóm bị xoá kèm layer con), nhân bản (nhóm được nhân bản cả cây), gộp nhiều
+  layer cùng nhóm (Merge Layers tại Ctrl+E), khoá/mở khoá, Opacity và Blend Mode.
+- Group Layers (Ctrl+G) đưa toàn bộ layer đang chọn vào nhóm mới; nhấp phải lên một
+  layer đã chọn giữ nguyên vùng chọn nhưng đổi layer dẫn cho menu ngữ cảnh.
+- Nhấp vào biểu tượng mắt chỉ bật/tắt đúng layer đó và không làm mất vùng chọn.
+- Kiểm thử tăng lên **611 bài** (tập chọn + tín hiệu, xoá/nhân bản/gộp hàng loạt và
+  Undo, thuộc tính hàng loạt, Shift/Ctrl click thật trong panel, eye click và menu
+  ngữ cảnh giữ vùng chọn, Group/Merge qua MainWindow).
+
+### Bổ sung v0.36.0 — Layer Style (Blending Options)
+- **Chuột phải layer ▸ Blending Options…** mở hộp thoại Layer Style bố cục giống
+  Photoshop: cột trái có danh sách *Styles* (preset) và *Effects* (Blending Options
+  + 10 hiệu ứng kèm ô đánh dấu), cột giữa là trang điều khiển, cột phải có OK/Cancel,
+  New Style…, Preview và ô xem trước 170×170. Nhãn và gợi ý bằng tiếng Việt.
+- **Blending Options thật**: Blend Mode, Opacity, Fill Opacity (chỉ giảm nội dung,
+  hiệu ứng vẫn đầy đủ), Knockout (None/Shallow/Deep), Blend Interior Effects as
+  Group, Blend Clipped Layers as Group, Transparency Shapes Layer, Layer Mask Hides
+  Effects và **Blend If** cho Gray/R/G/B với hai thanh trượt *This Layer* /
+  *Underlying Layer*, mỗi thanh bốn tay nắm đen–trắng tạo mép cứng hoặc mềm.
+- **10 hiệu ứng có thuật toán thật**: Drop Shadow, Inner Shadow, Outer Glow, Inner
+  Glow, Bevel & Emboss (5 kiểu, hướng lên/xuống), Satin, Color Overlay, Gradient
+  Overlay, Pattern Overlay (ca-rô/sọc/chấm/lưới dựng sẵn) và Stroke (ngoài/trong/
+  giữa). Mỗi hiệu ứng có blend mode, opacity, màu và tham số riêng; hiệu ứng dựng
+  từ silhouette alpha của layer nên chạy được cho layer pixel, văn bản, hình khối,
+  smart object và layer tô.
+- **Xem trước trực tiếp** là ảnh composite thật của vùng quanh layer (có nền ca-rô
+  cho vùng trong suốt), cập nhật trễ 120 ms khi kéo tham số; tài liệu chỉ thay đổi
+  khi bấm OK. OK áp style + blend mode + opacity trong **một bước Undo**; Ctrl+Z
+  khôi phục toàn bộ.
+- **Preset layer style** lưu trong SQLite (`kind = "layer_style"`), không dùng mạng:
+  New Style… để đặt tên (xác nhận ghi đè), nhấp đúp preset để áp, nút Xoá preset có
+  xác nhận; dòng đầu danh sách là "Mặc định" để bỏ mọi hiệu ứng.
+- **`.mps` v10** lưu `style` của từng layer; dự án cũ (v1–v9) mở bình thường với
+  style rỗng, file hỏng báo lỗi rõ ràng thay vì nạp sai.
+- **Giới hạn đã ghi rõ trong hộp thoại**: layer Group/Adjustment chỉ nhận Blend Mode
+  và Opacity (không có pixel riêng); tuỳ chọn Vector Mask Hides Effects bị mờ vì ứng
+  dụng chưa có vector mask; Knockout giới hạn trong phạm vi nhóm hiện tại nên
+  Shallow/Deep cho kết quả như nhau; các kiểu Bevel là mô phỏng gần đúng; hiệu ứng
+  không bị giảm theo Fill Opacity (giống Photoshop).
+- Kiểm thử tăng lên **638 bài** (mô hình + clamp + roundtrip, từng hiệu ứng và
+  Blend If, Fill Opacity, Knockout, mask ẩn hiệu ứng, Transparency Shapes Layer,
+  tile-seam, Undo/Redo, `.mps` v10 và dialog: checkbox, slider, preview, preset,
+  nối menu chuột phải).
 
 ## 2. Chạy ứng dụng
 
@@ -726,7 +866,7 @@ quy tắc với `compat/qt.py`.
 
 Đã kiểm chứng trên máy này: build bằng PySide2 5.15.2.1, thư mục ~160 MB / zip ~61 MB;
 exe chạy từ `dist` và từ bản zip giải nén đều mở cửa sổ ổn định và log ghi đúng
-phiên bản 0.27.0. Bản 0.30.0 cần chạy lại `build_portable.bat` để tạo zip mới.
+phiên bản 0.27.0. Bản 0.36.0 cần chạy lại `build_portable.bat` để tạo zip mới.
 
 
 ## 3. Phím tắt và thao tác
@@ -758,6 +898,7 @@ phiên bản 0.27.0. Bản 0.30.0 cần chạy lại `build_portable.bat` để 
 | Xoay/lật layer đang chọn | Menu Edit ▸ Transform |
 | Xoay layer tự do | Menu Edit ▸ Transform ▸ Rotate… |
 | Layer mới | Ctrl+Shift+N |
+| Chọn nhiều layer | Giữ Shift + nhấp (dải) / Ctrl + nhấp (bật/tắt) trong panel Layers |
 | Nhóm layer đang chọn / Bỏ nhóm | Ctrl+G / Ctrl+Shift+G |
 | Tạo / giải phóng Clipping Mask | Ctrl+Alt+G hoặc menu Layer |
 | Tạo layer văn bản | Ctrl+Shift+T |
@@ -814,8 +955,8 @@ cd D:\python\myphoto
 
 Kết quả đã kiểm tra (2026-11-20):
 
-- PySide2 5.15.2.1 + Python 3.10.22 (chạy thật trên máy): **566 passed**
-- PySide6 6.12.0 + Python 3.12.16 (offscreen, NumPy 2.5.5): **566 passed**
+- PySide2 5.15.2.1 + Python 3.10.22 (chạy thật trên máy): **638 passed**
+- PySide6 6.12.0 + Python 3.12.16 (offscreen, NumPy 2.5.5): **638 passed**
 
 Tạo lại ảnh xem trước giao diện:
 
@@ -905,6 +1046,20 @@ Tạo lại ảnh xem trước giao diện:
   "Ấm hoàng hôn" (đen 18, trắng 238, gamma 1,15) đã được chọn và áp vào xem trước.
 - `phase6_tiles.png` — tài liệu 3600 × 2400 xem ở 100%: canvas chỉ dựng các ô
   256 × 256 giao với khung nhìn, ảnh phụ nằm ngoài khung nhìn không được composite.
+- `phase6_psd_open.png` — mở file `demo_open.psd`: panel Layers giữ đúng nhóm lồng
+  "Họa tiết", mask của layer và của nhóm, blend mode Screen/Soft Light cùng opacity;
+  thanh trạng thái xác nhận không ghi đè file gốc.
+- `phase6_psd_text.png` — mở cùng file PSD và chọn layer chữ: panel Layers ghi
+  "Văn bản · 40 px", panel Properties hiện mục Type Layer với Transform; chữ
+  "My Photo Studio" hiển thị đúng và sửa được ngay trong app.
+- `phase6_layer_multi_select.png` — ba layer "Huy hiệu" được chọn cùng lúc (Shift +
+  nhấp); panel hiển thị vùng chọn và thanh trạng thái nhắc thao tác hàng loạt.
+- `phase6_layer_style.png` — thẻ chính có Drop Shadow, Bevel & Emboss và Stroke giữa;
+  huy hiệu có Outer Glow, Gradient Overlay cam→hồng và Stroke trong — tất cả là hiệu
+  ứng thật render trên canvas.
+- `phase6_layer_style_dialog.png` — hộp thoại Layer Style mở ở trang Drop Shadow:
+  danh sách Styles/Effects bên trái, điều khiển hiệu ứng ở giữa, xem trước 170 px và
+  các nút OK/Cancel/New Style/Preview bên phải.
 
 ## 5. Cấu trúc thư mục
 
@@ -941,13 +1096,14 @@ myphoto/
 ├── formats/
 │   ├── import_manager.py       # đọc ảnh bằng Pillow, gồm ảnh xám 16-bit/float
 │   ├── export_manager.py       # xuất ảnh, chất lượng JPEG/WebP, DPI
+│   ├── psd_import.py           # đọc PSD v1: header, layer/nhóm/mask, RLE/ZIP, composite
 │   └── native_project.py       # định dạng .mps v9
 ├── tools/                      # Move, chọn, Crop, Text, Shape, Brush, Eraser, Gradient,
 │                               # Eyedropper, Hand, Zoom + preview_screenshots.py,
 │                               # make_app_icon.py
 ├── ui/                         # main window, canvas, panels, theme, icons, dialogs
 ├── assets/themes/              # dark.qss, light.qss
-├── tests/                      # 566 bài kiểm thử
+├── tests/                      # 638 bài kiểm thử
 └── artifacts/                  # ảnh xem trước giao diện
 ```
 
@@ -973,7 +1129,9 @@ Các mục dưới đây **chưa được triển khai**, không có nút giả:
 - Tách nền/loại bỏ vật thể bằng AI; nếu triển khai sẽ ưu tiên xử lý offline, có công
   tắc bật/tắt và hiển thị tiến trình.
 - Plugin hệ thống và script tuỳ biến (ứng dụng luôn từ chối chạy mã lạ).
-- Nhập/xuất PSD, kéo thả file vào cửa sổ.
+- Xuất PSD; đọc PSB (PSD v2), PSD 16/32-bit và CMYK; nhập layer văn bản, smart
+  object, layer điều chỉnh và hình vector tự do (nhiều đường dẫn) từ PSD; kéo thả
+  file vào cửa sổ.
 
 Mục nào chưa làm được để mờ, không bấm được; không có nút giả hoặc nút chỉ hiện
 thông báo mà không xử lý.

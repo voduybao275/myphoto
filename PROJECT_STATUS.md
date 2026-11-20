@@ -1,9 +1,11 @@
 # Trạng thái dự án — My Photo Studio
 
 Cập nhật lần cuối: 2026-11-20  
-Phiên bản: 0.30.0  
+Phiên bản: 0.36.0  
 Giai đoạn hiện tại: **Giai đoạn 6 — Layer hình khối, Cọ/Tẩy, Gradient, Feather, chọn nâng cao, Quick Mask, giãn dòng/giãn chữ, định dạng theo từng đoạn chữ, uốn chữ, gõ chữ trên canvas, layer điều chỉnh không phá huỷ, mask cho layer điều chỉnh, Levels/Curves/Color Balance, Curves tách kênh + histogram + eyedropper, Layer Group, chữ trên đường dẫn + kerning cặp, layer fill + smart object, Auto Levels + kéo histogram, Automation batch/action + preset SQLite, tối ưu tile/lazy rendering, clipboard + khoá
-layer + Eyedropper + xuất ảnh chất lượng/DPI, Clipping Mask, menu chuột phải cho layer, Properties cho layer văn bản, Live Shape Properties cho hình khối đã HOÀN THÀNH**
+layer + Eyedropper + xuất ảnh chất lượng/DPI, Clipping Mask, menu chuột phải cho layer, Properties cho layer văn bản, Live Shape Properties cho hình khối, mở file PSD của
+Photoshop, nhập layer hình khối vector và layer văn bản từ PSD, chọn nhiều layer bằng
+Shift/Ctrl, hộp thoại Layer Style (Blending Options) với 10 hiệu ứng thật đã HOÀN THÀNH**
 
 ## 1. Tóm tắt
 
@@ -90,9 +92,9 @@ hiển thị mũi tên + thụt lề, dữ liệu lưu trong `.mps` v7.
 Phần 22 (v0.28.0) bổ sung **menu chuột phải cho layer**: Blending Options… (blend/opacity,
 một bước Undo), Copy CSS/Copy SVG vào clipboard, Quick Export as PNG, Merge Visible,
 Convert to Smart Object, Rasterize Layer, Copy/Paste Shape Attributes và 8 nhãn màu
-lưu trong `.mps` v8; các mục chưa hỗ trợ (artboard/frame, layer style, vector mask,
-link layer, isolation, Merge Layers nhiều lựa chọn, Postcard, 3D) hiển thị mờ kèm
-tooltip. Panel Layers vẽ dấu chấm màu của nhãn.
+lưu trong `.mps` v8; các mục chưa hỗ trợ (artboard/frame, vector mask,
+link layer, isolation, Postcard, 3D) hiển thị mờ kèm tooltip (layer style được bổ sung
+đầy đủ ở v0.36.0). Panel Layers vẽ dấu chấm màu của nhãn.
 Phần 23 (v0.29.0) bổ sung **Properties cho layer văn bản**: mục Type Layer với nhóm
 Transform (W/H hiển thị, X/Y sửa được có Undo, khoá tỉ lệ/góc xoay/lật/đặt lại để mờ
 kèm tooltip) và Character (font, Regular/Bold/Italic/Bold Italic, cỡ chữ, giãn dòng
@@ -104,14 +106,69 @@ riêng cho bốn góc TL/TR/BR/BL (nút nối để bo đều); mọi thay đổ
 một bước Undo. Kiểu nét đứt/chấm và thao tác nhiều đường dẫn (Hợp/Trừ/Giao/Loại) hiển
 thị mờ kèm tooltip. `.mps` v9 lưu thêm `corner_radii`, vẫn mở được dự án phiên bản 1–8
 (corner_radius cũ được chuyển thành bốn góc bằng nhau).
+Phần 25 (v0.31.0) bổ sung **mở file PSD của Photoshop**: bộ đọc viết độc lập theo
+tài liệu định dạng công khai của Adobe (không dùng mã/asset Adobe), hỗ trợ PSD v1
+RGB/Grayscale 8-bit với layer pixel, nhóm lồng nhau, mask layer/mask nhóm (kể cả mask
+đảo và mask tắt), clipping mask, opacity, 15 blend mode, nhãn màu, trạng thái ẩn/khoá,
+DPI và dữ liệu raw/RLE/ZIP. PSD chỉ có ảnh hợp nhất mở thành layer "Ảnh PSD"; layer văn
+bản/smart object/điều chỉnh/vector được bỏ qua và liệt kê trong hộp thoại báo cáo, kèm
+ảnh hợp nhất ẩn "Ảnh hợp nhất PSD" khi file có alpha. File gốc luôn chỉ đọc (không đặt
+`file_path`). Giới hạn an toàn 500 layer, 2 GB và 250 triệu pixel; PSB/16-bit/CMYK báo
+lỗi rõ ràng.
+Phần 26 (v0.32.0) bổ sung **nhập layer hình khối vector (live shape) từ PSD**: bộ đọc
+descriptor nội bộ giải mã tagged block `vogk` để lấy hình học chữ nhật/chữ nhật bo
+góc/ellipse, bán kính bo góc, màu viền và độ dày viền; layer được tạo bằng
+`Document.add_shape_layer` nên mở xong chỉnh sửa được ngay trong Live Shape
+Properties. Màu tô đặc lấy từ pixel gốc (bỏ qua dải viền theo độ dày viền) nên hình có
+viền vẫn nhận đúng màu; vị trí, layer mask, clipping, blend, opacity và nhóm được giữ
+nguyên. Hình tô gradient/ảnh, hình vector tự do hoặc thiếu dữ liệu sẽ giữ dạng layer
+pixel thay vì làm mất nội dung; báo cáo nhập thêm số layer hình khối đã chuyển.
+Phần 27 (v0.33.0) sửa việc nhập chữ nhật từ PSD thật: bộ đọc descriptor chấp nhận
+marker độ dài 0 cho khoá 4 ký tự và chọn đúng descriptor trong `vogk` khi file có
+trường phiên bản phụ. Với file chỉ lưu origin/bounding box trong `vogk` (không có
+khoá `rect`), app suy ra hình khối từ alpha mask của layer có vector mask `vmsk`:
+nhận diện chữ nhật, chữ nhật bo góc hoặc ellipse, lấy vị trí/kích thước chính xác và
+màu tô đặc từ pixel gốc. File `Untitled-1.psd` với 2 layer chữ nhật đen/đỏ nay mở
+thành 2 layer hình chữ nhật chỉnh sửa được; mask phức tạp, gradient và layer văn
+bản/smart object vẫn giữ dạng pixel. Bộ đọc ảnh hợp nhất nén RLE cũng được sửa để
+đọc bảng độ dài của mọi kênh nằm liền nhau như PSD thật, không còn cảnh báo hỏng.
+Phần 28 (v0.34.0) bổ sung **giữ layer văn bản PSD dưới dạng chữ chỉnh sửa tiếp**: bộ
+đọc giải mã tagged block `TySh` (biến đổi 6 số, nội dung, căn lề, các run định dạng,
+font, cỡ, màu, đậm/nghiêng, tracking, leading, giãn ngang/dọc, gạch chân/gạch ngang)
+và `EngineData` (FontSet, nội dung gốc); layer được tạo bằng mô hình văn bản sẵn có
+nên sửa được ngay trong app, vẫn giữ pixel gốc làm hình hiển thị ban đầu, cùng mask,
+clipping, blend, opacity và nhóm. Cỡ chữ quy đổi theo DPI của file, tracking PSD sang
+giãn chữ pixel, leading sang bội chiều cao dòng, warpStyle/warpValue sang kiểu uốn sẵn
+có. Khi descriptor chữ không kèm `StyleRun`, style được đọc từ `EngineData`
+(FontSet UTF-16, cỡ chữ pixel, màu ARGB, tracking/leading, căn lề ParagraphRun) nên
+file thật vẫn giữ đúng font/cỡ/màu. Văn bản dọc, file thiếu `TySh` hoặc dữ liệu chữ
+hỏng/rỗng giữ dạng layer pixel kèm cảnh báo; báo cáo nhập thêm số layer chữ đã chuyển.
+Phần 29 (v0.35.0) bổ sung **chọn nhiều layer**: panel Layers dùng chế độ chọn mở rộng,
+Shift + nhấp chọn dải liên tiếp, Ctrl + nhấp bật/tắt từng layer; tài liệu lưu tập layer
+đang chọn và layer dẫn. Xoá (kèm cây con của nhóm), nhân bản, gộp nhiều layer cùng nhóm,
+khoá, opacity và blend mode áp cho cả vùng chọn trong một bước Undo; Ctrl+G nhóm toàn bộ
+layer đang chọn; nhấp phải giữ vùng chọn và đổi layer dẫn; nhấp mắt chỉ đổi đúng layer.
 Không có nút giả: các chức năng chưa làm được để mờ hoặc chưa đưa vào giao diện.
+Phần 30 (v0.36.0) bổ sung **Layer Style (Blending Options)**: nhấp phải layer chọn
+"Blending Options…" mở hộp thoại bố cục giống tham chiếu — cột trái danh sách Styles và
+Effects có checkbox bật/tắt, cột giữa là trang điều khiển của từng mục, cột phải là
+xem trước 170 px dựng từ ảnh thật kèm OK/Cancel/New Style/Preview. Mười hiệu ứng đều
+render thật trên canvas: Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel &
+Emboss (5 kiểu), Satin, Color Overlay, Gradient Overlay, Pattern Overlay (ô bàn cờ,
+sọc, chấm, lưới) và Stroke (ngoài/trong/giữa); Blending Options có blend mode, opacity,
+fill opacity, knockout none/shallow/deep, Blend Interior/Clipped as Group, Transparency
+Shapes Layer, Layer Mask Hides Effects và Blend If cho Gray/R/G/B với hai tay nắm
+đen/trắng cho lớp này và lớp bên dưới. Mọi thay đổi gộp đúng một bước Undo khi nhấn OK,
+style lưu trong `.mps` v10, preset lưu/áp qua SQLite. Giới hạn đã ghi rõ: layer nhóm/
+điều chỉnh chỉ áp blend mode và opacity; vector mask hides effects chưa làm (ô bị mờ);
+knockout hiện giới hạn trong phạm vi nhóm hiện tại (shallow = deep); Bevel là xấp xỉ.
 
-- Kiểm thử: **566 passed** với PySide2 5.15.2.1 + Python 3.10.22 (môi trường chạy thật).
-- Kiểm thử: **566 passed** với PySide6 6.12.0 + Python 3.12.16 (offscreen, NumPy 2.5.5).
+- Kiểm thử: **638 passed** với PySide2 5.15.2.1 + Python 3.10.22 (môi trường chạy thật).
+- Kiểm thử: **638 passed** với PySide6 6.12.0 + Python 3.12.16 (offscreen, NumPy 2.5.5).
 - Đã mở thử `main.py` trên nền tảng Windows thật: cửa sổ chạy ổn định, không crash.
 - Bản portable PyInstaller đã build và chạy thử: `dist\MyPhotoStudio\MyPhotoStudio.exe`
   và bản zip giải nén đều mở cửa sổ ổn định, log ghi đúng phiên bản 0.27.0 (cần build
-  lại bằng `build_portable.bat` để có bản 0.30.0).
+  lại bằng `build_portable.bat` để có bản 0.36.0).
 - Ảnh xem trước: `artifacts/phase1_dark.png`, `artifacts/phase1_light.png`,
   `artifacts/phase2_selection.png`, `artifacts/phase2_crop.png`,
   `artifacts/phase2_image_size.png`, `artifacts/phase2_canvas_size.png`,
@@ -141,7 +198,10 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
   `artifacts/phase6_smart_object_dialog.png`,
   `artifacts/phase6_levels_auto.png`,
   `artifacts/phase6_batch_dialog.png`,
-  `artifacts/phase6_preset_library.png`, `artifacts/phase6_tiles.png`.
+  `artifacts/phase6_preset_library.png`, `artifacts/phase6_tiles.png`,
+  `artifacts/phase6_psd_open.png`, `artifacts/phase6_psd_text.png`,
+  `artifacts/phase6_layer_multi_select.png`, `artifacts/phase6_layer_style.png`,
+  `artifacts/phase6_layer_style_dialog.png`.
 
 ## 2. Chức năng đã hoàn thành
 
@@ -150,7 +210,7 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
 - Nhiều tài liệu mở cùng lúc bằng tab; đóng tab có cảnh báo chưa lưu.
 - Undo/Redo bằng Command Pattern, tối đa 60 trạng thái; lưu dự án không xoá lịch sử.
 - Signal `content_changed`, `structure_changed`, `history_changed`, `title_changed`,
-  `selection_changed`.
+  `selection_changed`, `active_layer_changed`, `layer_selection_changed`.
 - Undo/Redo cho thay đổi vùng chọn, mask, crop, canvas size, image size và xoay/lật.
 
 ### Layer
@@ -159,6 +219,8 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
   visibility, lock (nút ổ khoá, Ctrl+/), clipping mask (Ctrl+Alt+G), blend mode.
 - 15 chế độ hoà trộn theo công thức W3C, xử lý alpha thẳng.
 - Tạo, nhân bản, đổi tên, xoá, chọn active, kéo thả đổi thứ tự.
+- Chọn nhiều layer (Shift + nhấp chọn dải, Ctrl + nhấp bật/tắt); thao tác xoá, nhân
+  bản, gộp, khoá, opacity và blend mode áp cho cả vùng chọn trong một bước Undo.
 - Merge Down, Flatten Image, kiểm tra hợp lệ khi chọn active.
 - Thumbnail trong panel, cache theo `pixel_revision`.
 - Di chuyển layer bằng công cụ Move (preview khi kéo, commit khi thả, có Undo).
@@ -746,6 +808,33 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
   mỗi lần sửa; gõ chữ trên canvas vẫn dùng composite toàn ảnh; chưa đa luồng và chưa
   lưu cache ra đĩa.
 
+### Layer Style / Blending Options (Giai đoạn 6 — phần 30)
+- `core/layer_style.py`: mô hình bất biến `LayerStyle` gồm 10 hiệu ứng (Drop Shadow,
+  Inner Shadow, Outer Glow, Inner Glow, Bevel & Emboss 5 kiểu, Satin, Color Overlay,
+  Gradient Overlay, Pattern Overlay 4 hoạ tiết, Stroke 3 vị trí), Blending Options
+  (blend mode, opacity, fill opacity, knockout none/shallow/deep, Blend Interior/Clipped
+  as Group, Transparency Shapes Layer, Layer Mask Hides Effects) và Blend If cho
+  Gray/R/G/B với hai tay nắm đen/trắng cho lớp này và lớp bên dưới. Mọi giá trị được
+  kẹp biên, so sánh bằng equality, có `to_dict`/`from_dict` và roundtrip.
+- `render_effect_passes(style, alpha, rect, layer_bounds)` dựng silhouette, áp dịch
+  chuyển, giãn/co, blur hộp và trả về các pass nằm dưới/trên nội dung; `effect_margin`
+  mở rộng vùng composite để hiệu ứng không bị cắt ở ranh giới ô.
+- `core/canvas.py`: `_blend_styled_rect` áp fill opacity, knockout theo hình dạng layer
+  (nên Fill 0% + Knockout đục được nền), overlay theo Shape Transparency, sau đó vẽ
+  các pass hiệu ứng; kết quả khớp giữa composite toàn ảnh và `composite_region`.
+- `Document.set_layer_style(layer, style, *, blend_mode=None, opacity=None, record=True)`:
+  từ chối style cho kind không hỗ trợ (điều chỉnh/nhóm chỉ blend/opacity), ghi một bước
+  Undo duy nhất và trả `True/False` khi có/không thay đổi.
+- `ui/layer_style_dialog.py`: hộp thoại ba cột — danh sách Styles + Effects có checkbox,
+  trang điều khiển từng hiệu ứng/Blending Options/Blend If, xem trước 170 px dựng từ
+  ảnh thật bằng debounce 120 ms, nút OK/Cancel/New Style/Preview; preset lưu SQLite
+  (kind `layer_style`); OK trả style và MainWindow ghi đúng một bước Undo.
+- `.mps` v10 lưu style của từng layer; bộ đọc từ chối version mới hơn và dữ liệu style
+  hỏng/thếu khoá bằng `ProjectFormatError`.
+- Kiểm thử: 27 bài trong `tests/test_layer_style.py` phủ clamp, Blend If, từng hiệu ứng,
+  knockout, mask hides effects, tile/composite_region, Undo/Redo, roundtrip `.mps` v10,
+  hộp thoại và wiring menu chuột phải.
+
 ### Canvas và công cụ
 - Zoom 2%–3200%, zoom tại con trỏ, Fit on Screen, Actual Pixels.
 - Render hai chế độ: ô 256 × 256 composite theo khung nhìn (zoom ≥ 50%) và ảnh preview
@@ -810,6 +899,12 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
 ### File
 - Import: PNG, JPEG, BMP, TIFF, GIF (khung đầu), WebP; EXIF orientation; ảnh xám
   16-bit (I;16) và TIFF float (F/I) được co về 8-bit theo dải thực tế.
+- Import PSD (phần 25–26): PSD v1 RGB/Grayscale 8-bit; layer pixel, nhóm, mask
+  layer/nhóm, clipping, opacity, 15 blend mode, nhãn màu, ẩn/khoá, DPI; dữ liệu
+  raw/RLE/ZIP; layer live shape chữ nhật/bo góc/ellipse có `vogk` được chuyển thành
+  layer hình khối chỉnh sửa được (giữ mask/clipping/blend/opacity/nhóm; hình gradient
+  hoặc vector tự do giữ dạng pixel); báo cáo layer bị bỏ qua (văn bản/smart
+  object/điều chỉnh); file chỉ đọc, không đặt `file_path` nên không thể ghi đè file gốc.
 - Export: PNG (giữ alpha), JPEG/BMP (nền trắng), TIFF, WebP; JPEG/WebP chọn chất lượng
   1..100 (ghi nhớ trong cấu hình), PNG/JPEG/TIFF ghi kèm DPI của tài liệu.
 - Dự án `.mps` **phiên bản 9**: ZIP gồm `manifest.json` + PNG từng layer +
@@ -881,6 +976,8 @@ Không có nút giả: các chức năng chưa làm được để mờ hoặc c
 | `test_layer_code.py` | 6 | Copy CSS cho pixel/văn bản/hình khối/fill, blend/opacity/vị trí; Copy SVG tự chứa; từ chối nhóm và layer điều chỉnh; render layer RGBA áp mask |
 | `test_export.py` | 11 | PNG alpha, JPEG/BMP nền trắng, TIFF/WebP, đuôi không hỗ trợ; DPI cho PNG/JPEG/TIFF; chất lượng JPEG thay đổi kích thước file |
 | `test_import.py` | 8 | PNG, JPEG, file thiếu/rỗng/hỏng; ảnh xám 16-bit PNG/TIFF và TIFF float co đúng về 8-bit |
+| `test_layer_multi_selection.py` | 10 | Document: tập chọn + layer dẫn + signal, nhân bản/xoá nhiều layer và cây con nhóm + undo, gộp nhiều layer cùng nhóm (từ chối khác nhóm/nhóm con), thuộc tính hàng loạt khoá/opacity/blend/visible; UI: Shift chọn dải, Ctrl bật/tắt, eye click giữ vùng chọn, chuột phải giữ vùng chọn và đổi layer dẫn, nút panel áp lên cả vùng chọn, Group/Merge qua MainWindow |
+| `test_psd_import.py` | 35 | PSD tổng hợp: raw/RLE/ZIP, thuộc tính layer + DPI, thứ tự/nhóm/mask layer + mask nhóm, clipping + blend, mask tương đối/đảo/tắt, global mask + tagged block padding 4, chỉ có ảnh hợp nhất, từ chối PSB/16-bit/CMYK/chữ ký sai/file cụt/quá lớn, không có layer lẫn composite, bộ lọc mở file và MainWindow mở PSD/thông báo lỗi; live shape `vogk`: chữ nhật, bo góc, ellipse, viền + tắt tô, hình gradient giữ pixel, mask của shape và shape trong nhóm; descriptor kiểu Photoshop thật (marker độ dài 0, vogk origin + `vmsk`) và suy luận chữ nhật/ellipse/bo góc từ alpha mask, không có `vmsk` thì giữ pixel; ảnh hợp nhất nén RLE đọc đúng cả bố cục bảng độ dài toàn kênh (đặc tả) lẫn bảng riêng từng kênh (file cũ); layer chữ `TySh`: văn bản cơ bản (font/cỡ/màu/đậm), nhiều run + FontSet + DPI 144, căn lề/tracking/warp/cảnh báo, style chỉ có trong EngineData (font UTF-16, cỡ pixel, màu ARGB, căn lề), nhiều run font từ EngineData, văn bản dọc giữ pixel, TySh hỏng giữ pixel, giữ nhóm và mask |
 | `test_ui_smoke.py` | 31 | MainWindow, layer/undo, theme, chụp ảnh; menu chuột phải layer (nhãn mục, Copy CSS, nhãn màu, Quick Export, Convert/Rasterize); panel Properties văn bản: W/H/X/Y, trạng thái điều khiển, sửa X/Y + Undo; sửa cỡ chữ/kiểu/giãn dòng/tracking/màu + Undo, ẩn với layer pixel; panel Live Shape Properties: W/H có khoá tỉ lệ, X/Y + Undo, tô/viền/độ dày, bo góc riêng bốn góc + bo đều, nút đường dẫn để mờ, ẩn với ellipse/pixel; công cụ chọn, mask, crop, hộp thoại size; action xoay/lật; hộp thoại xoay tự do; hộp thoại văn bản và luồng tạo/sửa/rasterize; menu Filter, hộp thoại bộ lọc, xem trước và bật/tắt action; hộp thoại shape, công cụ Shape kéo vẽ, Options Bar, menu/panel, undo/redo, rasterize và huỷ bằng Escape; Brush/Eraser kéo vẽ, phím tắt, mask target, Paint on Layer Mask và huỷ nét; Gradient kéo tô, Options Bar, mẫu màu, undo, gradient hình tròn, vẽ mask dùng chung với Brush, phím G và Escape; Feather/Anti-alias trên Options Bar, kéo chọn, menu Feather, hộp thoại và tuỳ chọn riêng từng công cụ; Lasso/Wand/Quick Selection, phím L/W/Shift+W, cộng/trừ vùng chọn, preview Quick Selection, Quick Mask phím Q/menu/tự tắt; ô Giãn dòng / chữ trong hộp thoại văn bản, xem trước và đọc lại thuộc tính; định dạng theo vùng bôi đen, đồng bộ điều khiển theo con trỏ, sửa runs nhiều kiểu và roundtrip văn bản cũ/nhiều dòng; layer điều chỉnh: badge/subtitle/tooltip, blend combo bị mờ, trạng thái action, panel Properties, hộp thoại xem trước và nhấp đôi để sửa; hộp thoại Levels/Curves/Color Balance: trường nhập, gamma, trình vẽ đường cong, đặt lại 45°, giữ luminosity, panel Properties; ô Kerning cặp và chữ trên đường dẫn trong hộp thoại văn bản, xem trước, báo lỗi cú pháp, panel Properties hiển thị đường dẫn/kerning; clipboard cut/copy/copy merged/paste/clear/fill và khoá layer; Eyedropper; phím X/D và đổi cỡ cọ `[` `]`; clipping mask: action/nhãn/trạng thái, mũi tên và phụ đề panel |
 
 Lệnh chạy:
@@ -919,7 +1016,11 @@ cd D:\python\myphoto
    tách nền/loại bỏ vật thể.
 9. Xem trước bộ lọc dùng ảnh thu nhỏ; bán kính blur được nhân theo tỉ lệ nên kết quả
    xem trước chỉ gần đúng, kết quả cuối cùng luôn tính ở độ phân giải đầy đủ.
-10. Chưa hỗ trợ kéo thả file vào cửa sổ, chưa đọc/ghi PSD.
+10. Chưa hỗ trợ kéo thả file vào cửa sổ; PSD mới chỉ đọc v1 RGB/Grayscale 8-bit —
+    chưa đọc PSB, 16/32-bit, CMYK, chưa nhập layer smart object/điều chỉnh,
+    hình vector tự do nhiều đường dẫn, layer style hay vector mask, và chưa xuất PSD.
+    Live shape chỉ chuyển được chữ nhật/bo góc/ellipse có tô đặc; hình tô gradient,
+    hình có hiệu ứng hoặc hình tự do vẫn giữ dạng pixel.
 11. Undo vẫn lưu bản sao layer nên tốn RAM với ảnh lớn; canvas đã dùng tile/lazy
     rendering nhưng cache giới hạn 96 ô 256 × 256 (khoảng 24 MB), ô bị đẩy khỏi cache
     sẽ composite lại khi cuộn ngược và chưa có composite đa luồng.
@@ -935,11 +1036,12 @@ cd D:\python\myphoto
 15. Dán ảnh từ ứng dụng khác luôn tạo layer mới đặt giữa canvas (không theo con trỏ);
     clipboard nội bộ chỉ giữ offset gốc khi nội dung ảnh còn nguyên vẹn. Khoá layer là
     khoá toàn phần (không khoá riêng vị trí/độ trong suốt).
-16. Menu chuột phải layer chưa hỗ trợ artboard/frame, layer style, vector mask, liên kết
-    layer, isolation mode, Postcard và 3D extrusion; các mục này để mờ kèm tooltip. Mô
-    hình chọn một layer nên Merge Layers và thao tác nhóm nhiều layer bị tắt. Copy CSS
-    chỉ xuất style của một layer (không xuất cả document); Copy SVG nhúng ảnh raster
-    chứ không vector hoá layer.
+16. Menu chuột phải layer chưa hỗ trợ artboard/frame, vector mask, liên kết
+    layer, isolation mode, Postcard và 3D extrusion; các mục này để mờ kèm tooltip.
+    Layer Style đã có từ v0.36.0 nhưng chưa nhập/xuất được style từ/đến PSD, chưa hỗ trợ
+    vector mask hides effects, knockout chỉ trong phạm vi nhóm hiện tại và Bevel là xấp
+    xỉ. Merge Layers áp cho nhóm layer cùng nhóm cha; Copy CSS chỉ xuất style của một
+    layer (không xuất cả document); Copy SVG nhúng ảnh raster chứ không vector hoá layer.
 17. Panel Properties văn bản chưa sửa trực tiếp W/H, góc xoay, lật hoặc đặt lại
     transform (để mờ kèm tooltip); X/Y hoạt động. Kerning cấp layer chưa có nên trường
     này để mờ; kerning theo cặp vẫn chỉnh trong hộp thoại văn bản. Thay đổi font/cỡ/màu

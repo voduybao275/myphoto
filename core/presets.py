@@ -1,7 +1,8 @@
-"""Thư viện preset cục bộ bằng SQLite (điều chỉnh màu và action hàng loạt).
+"""Thư viện preset cục bộ bằng SQLite (điều chỉnh màu, action, layer style).
 
-Không dùng mạng. Mỗi preset là một bản ghi gồm ``kind`` (``adjustment`` hoặc
-``action``), ``name`` duy nhất trong từng loại và ``payload`` JSON.
+Không dùng mạng. Mỗi preset là một bản ghi gồm ``kind`` (``adjustment``,
+``action`` hoặc ``layer_style``), ``name`` duy nhất trong từng loại và
+``payload`` JSON.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from config.settings import app_config_dir
 
 logger = logging.getLogger(__name__)
 
-PRESET_KINDS = ("adjustment", "action")
+PRESET_KINDS = ("adjustment", "action", "layer_style")
 MAX_PRESET_NAME = 48
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS presets (

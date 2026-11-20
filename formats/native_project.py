@@ -25,12 +25,13 @@ from core.adjustment_layer import AdjustmentProperties
 from core.document import Document
 from core.fill_layer import FillProperties
 from core.layer import BLEND_MODE_IDS, LAYER_COLOR_IDS, Layer, LayerKind
+from core.layer_style import LayerStyle
 from core.shape_layer import ShapeProperties
 from core.smart_object import SmartObjectProperties, validate_source
 from core.text_layer import TextProperties
 
 FORMAT_ID = "myphoto-project"
-FORMAT_VERSION = 9
+FORMAT_VERSION = 10
 
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 _MAX_LAYER_BYTES = 512 * 1024 * 1024
@@ -107,6 +108,8 @@ def save_project(document: Document, path: str | Path) -> Path:
                     entry["fill"] = layer.fill_props.to_dict()
                 elif layer.kind == LayerKind.SMART and layer.smart_props is not None:
                     entry["smart"] = layer.smart_props.to_dict()
+                if layer.style is not None:
+                    entry["style"] = layer.style.to_dict()
                 manifest["layers"].append(entry)
                 buffer = io.BytesIO()
                 image = Image.fromarray(np.ascontiguousarray(layer.pixels), "RGBA")
@@ -388,6 +391,14 @@ def load_project(path: str | Path) -> Document:
                 layer.adjustment = adjustment_properties
                 layer.fill_props = fill_properties
                 layer.smart_props = smart_properties
+                if "style" in entry:
+                    try:
+                        layer.style = LayerStyle.from_dict(entry.get("style"))
+                    except ValueError as exc:
+                        raise ProjectFormatError(
+                            f"Dữ liệu layer style của layer '{layer.name}' "
+                            f"không hợp lệ."
+                        ) from exc
                 if layer_kind == LayerKind.SMART:
                     smart_source = _load_smart_source(
                         archive, entry, smart_properties

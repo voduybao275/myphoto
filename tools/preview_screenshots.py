@@ -6,6 +6,7 @@ Chạy từ thư mục gốc dự án:
 
 from __future__ import annotations
 
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -29,13 +30,22 @@ from core.batch import BatchAction, BatchStep
 from core.document import Document
 from core.fill_layer import FillProperties
 from core.gradient import GradientSettings
-from core.layer import Layer
+from core.layer import Layer, LayerKind
+from core.layer_style import (
+    BevelSettings,
+    ColorOverlaySettings,
+    DropShadowSettings,
+    GradientOverlaySettings,
+    LayerStyle,
+    OuterGlowSettings,
+    StrokeSettings,
+)
 from core.paint import BrushSettings
 from core.presets import PresetStore
 from core.selection import Selection
 from core.shape_layer import ShapeProperties
 from core.smart_object import SmartObjectProperties
-from core.text_layer import TextProperties, TextRun, text_size
+from core.text_layer import TextProperties, TextRun, render_text, text_size
 from core.wand import flood_fill_mask, mask_to_path
 from formats.export_manager import export_image
 from ui import theme
@@ -50,6 +60,7 @@ from ui.dialogs import (
     SmartObjectDialog,
     TextDialog,
 )
+from ui.layer_style_dialog import LayerStyleDialog
 from ui.main_window import MainWindow
 
 OUTPUT_DIR = ROOT / "artifacts"
@@ -1540,6 +1551,144 @@ def build_phase6_groups_document(
     return document
 
 
+def build_phase6_layer_style_document(
+    name: str = "Phase 6 Layer Style Demo",
+) -> tuple[Document, Layer]:
+    document = Document(1200, 800, dpi=72.0, name=name)
+    document.add_layer(
+        layer=gradient_layer(1200, 800), index=0, select=False, record=False
+    )
+
+    width, height = 620, 340
+    y = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
+    top = np.array([44, 54, 82], dtype=np.float32)
+    bottom = np.array([24, 30, 48], dtype=np.float32)
+    rgb = top[None, :] * (1.0 - y) + bottom[None, :] * y
+    rgb = np.repeat(rgb[:, None, :], width, axis=1)
+    mask_image = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(mask_image).rounded_rectangle(
+        (3, 3, width - 3, height - 3), radius=30, fill=255
+    )
+    card_pixels = np.empty((height, width, 4), dtype=np.uint8)
+    card_pixels[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+    card_pixels[..., 3] = np.asarray(mask_image, dtype=np.uint8)
+    card = Layer(width, height, name="Thẻ chính")
+    card.set_pixels(card_pixels)
+    card.offset_x = 110
+    card.offset_y = 210
+    document.add_layer(layer=card, select=True, record=False)
+    card.style = LayerStyle(
+        effects=(
+            DropShadowSettings(
+                enabled=True,
+                color=(2, 4, 10, 255),
+                opacity=0.65,
+                angle=120.0,
+                distance=16.0,
+                spread=6.0,
+                size=20.0,
+            ),
+            BevelSettings(
+                enabled=True,
+                style="inner",
+                depth=120.0,
+                direction="up",
+                size=8.0,
+                soften=3.0,
+                highlight_color=(255, 236, 196, 255),
+                highlight_opacity=0.45,
+                shadow_color=(0, 0, 0, 255),
+                shadow_opacity=0.4,
+            ),
+            StrokeSettings(
+                enabled=True,
+                size=2.0,
+                position="center",
+                color=(255, 206, 128, 255),
+            ),
+        )
+    )
+
+    badge = document.add_shape_layer(
+        ShapeProperties(
+            kind="rounded_rectangle",
+            width=210,
+            height=86,
+            fill_color=(90, 110, 160, 255),
+            stroke_color=(255, 255, 255, 0),
+            stroke_width=0,
+            corner_radius=22.0,
+        ),
+        x=470,
+        y=460,
+        record=False,
+    )
+    badge.name = "Huy hiệu Gradient"
+    badge.style = LayerStyle(
+        effects=(
+            OuterGlowSettings(
+                enabled=True,
+                color=(255, 178, 92, 255),
+                blend_mode="screen",
+                opacity=0.8,
+                spread=4.0,
+                size=14.0,
+            ),
+            GradientOverlaySettings(
+                enabled=True,
+                start_color=(255, 176, 84, 255),
+                end_color=(242, 92, 128, 255),
+                blend_mode="normal",
+                opacity=1.0,
+                angle=25.0,
+                scale=100.0,
+            ),
+            StrokeSettings(
+                enabled=True,
+                size=2.0,
+                position="inside",
+                color=(255, 236, 210, 255),
+            ),
+        )
+    )
+
+    document.add_text_layer(
+        TextProperties(
+            text="LAYER STYLE",
+            font_size=62,
+            bold=True,
+            color=(255, 208, 128, 255),
+        ),
+        154,
+        292,
+        record=False,
+    )
+    document.add_text_layer(
+        TextProperties(
+            text="Drop Shadow · Bevel & Emboss · Stroke · Gradient Overlay",
+            font_size=22,
+            color=(214, 222, 236, 255),
+        ),
+        158,
+        388,
+        record=False,
+    )
+    document.add_text_layer(
+        TextProperties(
+            text="Blend If · Fill Opacity · Knockout · hiệu ứng thật trên mọi layer",
+            font_size=19,
+            italic=True,
+            color=(158, 170, 192, 255),
+        ),
+        158,
+        430,
+        record=False,
+    )
+    document.set_active_layer(card)
+    document.mark_clean()
+    return document, card
+
+
 def build_phase6_fill_smart_document(
     name: str = "Phase 6 Fill & Smart Object Demo",
 ) -> tuple[Document, Layer, Layer]:
@@ -1670,6 +1819,465 @@ def build_phase6_tiles_document(
     document.set_active_layer(detail)
     document.mark_clean()
     return document
+
+
+def build_phase6_psd_demo(path: Path) -> Path:
+    """Ghi PSD RGB 8-bit nhỏ (RLE) mô phỏng file Photoshop để chụp ảnh mở PSD."""
+
+    def u16(value: int) -> bytes:
+        return struct.pack(">H", value)
+
+    def i16(value: int) -> bytes:
+        return struct.pack(">h", value)
+
+    def u32(value: int) -> bytes:
+        return struct.pack(">I", value)
+
+    def packbits(data: bytes) -> bytes:
+        out = bytearray()
+        index = 0
+        while index < len(data):
+            chunk = data[index : index + 128]
+            out.append(len(chunk) - 1)
+            out += chunk
+            index += len(chunk)
+        return bytes(out)
+
+    def channel_block(array: np.ndarray) -> bytes:
+        plane = np.ascontiguousarray(array, dtype=np.uint8)
+        rows = [packbits(plane[row].tobytes()) for row in range(plane.shape[0])]
+        table = b"".join(u16(len(row)) for row in rows)
+        return u16(1) + table + b"".join(rows)
+
+    def tag(key: bytes, data: bytes) -> bytes:
+        return b"8BIM" + key + u32(len(data)) + data
+
+    def dstr(text: str) -> bytes:
+        return u32(len(text)) + text.encode("utf-16-be")
+
+    def did(text: str) -> bytes:
+        raw = text.encode("latin-1")
+        return u32(len(raw)) + raw
+
+    def descriptor(name: str, class_id: str, items: list[bytes]) -> bytes:
+        return dstr(name) + did(class_id) + u32(len(items)) + b"".join(items)
+
+    def desc_item(key: str, os_type: bytes, value: bytes) -> bytes:
+        return did(key) + os_type + value
+
+    def d_double(value: float) -> bytes:
+        return struct.pack(">d", value)
+
+    def round_rect_vogk(
+        top: int,
+        left: int,
+        bottom: int,
+        right: int,
+        radius: float,
+        stroke: tuple[float, tuple[int, int, int]] | None = None,
+    ) -> bytes:
+        geometry = descriptor(
+            "",
+            "rnd ",
+            [
+                desc_item("Top ", b"doub", d_double(float(top))),
+                desc_item("Left", b"doub", d_double(float(left))),
+                desc_item("Btom", b"doub", d_double(float(bottom))),
+                desc_item("Rght", b"doub", d_double(float(right))),
+                desc_item("Rds ", b"doub", d_double(radius)),
+            ],
+        )
+        style_items = [desc_item("fillEnabled", b"bool", b"\x01")]
+        if stroke is not None:
+            stroke_width, stroke_color = stroke
+            rg = descriptor(
+                "",
+                "RGBC",
+                [
+                    desc_item("Rd  ", b"doub", d_double(stroke_color[0])),
+                    desc_item("Grn ", b"doub", d_double(stroke_color[1])),
+                    desc_item("Bl  ", b"doub", d_double(stroke_color[2])),
+                ],
+            )
+            style_items += [
+                desc_item("strokeEnabled", b"bool", b"\x01"),
+                desc_item(
+                    "strokeStyleLineWidth",
+                    b"UntF",
+                    b"#Pnt" + d_double(stroke_width),
+                ),
+                desc_item(
+                    "strokeStyleContent",
+                    b"Objc",
+                    descriptor("", "SoCo", [desc_item("Clr ", b"Objc", rg)]),
+                ),
+            ]
+        style = descriptor("", "shapeStyle", style_items)
+        return u32(1) + descriptor(
+            "",
+            "vectorOriginationData",
+            [
+                desc_item("roundRect", b"Objc", geometry),
+                desc_item("shapeStyle", b"Objc", style),
+            ],
+        )
+
+    def text_style_data(
+        font_name: str, size: float, color: tuple[float, float, float]
+    ) -> bytes:
+        return descriptor(
+            "",
+            "StyleSheetData",
+            [
+                desc_item("FontPostScriptName", b"TEXT", dstr(font_name)),
+                desc_item("FontSize", b"doub", d_double(size)),
+                desc_item("FauxBold", b"bool", b"\x00"),
+                desc_item("FauxItalic", b"bool", b"\x00"),
+                desc_item("Tracking", b"long", struct.pack(">i", 0)),
+                desc_item("Leading", b"doub", d_double(0.0)),
+                desc_item("AutoLeading", b"bool", b"\x01"),
+                desc_item("Underline", b"bool", b"\x00"),
+                desc_item("Strikethrough", b"bool", b"\x00"),
+                desc_item("HorizontalScale", b"long", struct.pack(">i", 100)),
+                desc_item("VerticalScale", b"long", struct.pack(">i", 100)),
+                desc_item(
+                    "FillColor",
+                    b"Objc",
+                    descriptor(
+                        "",
+                        "RGBC",
+                        [
+                            desc_item("Rd  ", b"doub", d_double(color[0])),
+                            desc_item("Grn ", b"doub", d_double(color[1])),
+                            desc_item("Bl  ", b"doub", d_double(color[2])),
+                        ],
+                    ),
+                ),
+            ],
+        )
+
+    def text_style_run(count: int, style: bytes) -> bytes:
+        run = descriptor(
+            "",
+            "Pnt ",
+            [
+                desc_item(
+                    "StyleSheet",
+                    b"Objc",
+                    descriptor(
+                        "",
+                        "StyleSheet",
+                        [desc_item("StyleSheetData", b"Objc", style)],
+                    ),
+                )
+            ],
+        )
+        return descriptor(
+            "",
+            "StyleRun",
+            [
+                desc_item(
+                    "RunLengthArray",
+                    b"VlLs",
+                    u32(1) + b"long" + struct.pack(">i", count),
+                ),
+                desc_item("RunArray", b"VlLs", u32(1) + b"Objc" + run),
+            ],
+        )
+
+    def text_tysh(
+        text: str,
+        style: bytes,
+        bounds: tuple[int, int, int, int],
+    ) -> bytes:
+        top, left, bottom, right = bounds
+        root = descriptor(
+            "",
+            "TxLr",
+            [
+                desc_item("Txt ", b"TEXT", dstr(text)),
+                desc_item("Ornt", b"enum", did("Ornt") + did("Hrzn")),
+                desc_item(
+                    "bounds",
+                    b"Objc",
+                    descriptor(
+                        "",
+                        "bounds",
+                        [
+                            desc_item("Left", b"doub", d_double(float(left))),
+                            desc_item("Top ", b"doub", d_double(float(top))),
+                            desc_item("Rght", b"doub", d_double(float(right))),
+                            desc_item("Btom", b"doub", d_double(float(bottom))),
+                        ],
+                    ),
+                ),
+                desc_item("StyleRun", b"Objc", text_style_run(len(text), style)),
+            ],
+        )
+        warp = descriptor(
+            "",
+            "warp",
+            [
+                desc_item("warpStyle", b"enum", did("warpStyle") + did("warpNone")),
+                desc_item("warpValue", b"doub", d_double(0.0)),
+            ],
+        )
+        return (
+            u16(1)
+            + struct.pack(">6d", 1.0, 0.0, 0.0, 1.0, float(left), float(top))
+            + u16(50)
+            + u32(16)
+            + root
+            + u16(1)
+            + u32(16)
+            + warp
+            + struct.pack(">iiii", top, left, bottom, right)
+        )
+
+    def record(
+        name: str,
+        rect: tuple[int, int, int, int],
+        channels: dict[int, np.ndarray],
+        *,
+        opacity: int = 255,
+        blend: bytes = b"norm",
+        section: int = 0,
+        mask: tuple[tuple[int, int, int, int], np.ndarray] | None = None,
+        tags: tuple[tuple[bytes, bytes], ...] = (),
+    ) -> tuple[bytes, bytes]:
+        if mask is not None:
+            channels = {**channels, -2: mask[1]}
+        info = b""
+        data = b""
+        for channel_id, array in channels.items():
+            block = channel_block(array)
+            info += i16(channel_id) + u32(len(block))
+            data += block
+        extra = b""
+        if mask is not None:
+            extra += u32(18) + struct.pack(">iiii", *mask[0]) + b"\xff\x00"
+        else:
+            extra += u32(0)
+        extra += u32(0)
+        raw_name = name.encode("utf-8")
+        extra += bytes([len(raw_name)]) + raw_name
+        extra += b"\x00" * ((4 - ((1 + len(raw_name)) % 4)) % 4)
+        if section:
+            extra += tag(b"lsct", u32(section) + b"8BIM" + b"norm")
+        for key, tag_data in tags:
+            extra += tag(key, tag_data)
+        header = (
+            struct.pack(">iiii", *rect)
+            + u16(len(channels))
+            + info
+            + b"8BIM"
+            + blend
+            + bytes([opacity, 0, 0, 0])
+            + u32(len(extra))
+            + extra
+        )
+        return header, data
+
+    width, height = 640, 420
+    background = np.zeros((height, width, 4), dtype=np.uint8)
+    y = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
+    x = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
+    background[..., 0] = np.clip(24 + 96 * x + 18 * y, 0, 255).astype(np.uint8)
+    background[..., 1] = np.clip(30 + 42 * x + 12 * y, 0, 255).astype(np.uint8)
+    background[..., 2] = np.clip(58 + 92 * x + 30 * y, 0, 255).astype(np.uint8)
+    background[..., 3] = 255
+
+    glow_w, glow_h = 300, 220
+    yy, xx = np.mgrid[0:glow_h, 0:glow_w].astype(np.float32)
+    cx, cy = (glow_w - 1) / 2.0, (glow_h - 1) / 2.0
+    dist = np.sqrt(((xx - cx) / cx) ** 2 + ((yy - cy) / cy) ** 2)
+    falloff = np.clip(1.0 - dist, 0.0, 1.0) ** 1.6
+    glow = np.zeros((glow_h, glow_w, 4), dtype=np.uint8)
+    glow[..., 0] = 255
+    glow[..., 1] = np.clip(150 + 80 * falloff, 0, 255).astype(np.uint8)
+    glow[..., 2] = 90
+    glow[..., 3] = (falloff * 235).astype(np.uint8)
+
+    square_w, square_h = 210, 170
+    masked = np.zeros((square_h, square_w, 4), dtype=np.uint8)
+    masked[..., 0] = 40
+    masked[..., 1] = 196
+    masked[..., 2] = 178
+    masked[..., 3] = 255
+    square_mask = np.zeros((square_h, square_w), dtype=np.uint8)
+    square_mask[:, : square_w // 2] = 255
+    square_mask[:, square_w // 2 :] = np.linspace(
+        255, 0, square_w - square_w // 2, dtype=np.float32
+    ).astype(np.uint8)
+
+    accent = np.zeros((140, 140, 4), dtype=np.uint8)
+    yy, xx = np.mgrid[0:140, 0:140].astype(np.float32)
+    dist = np.sqrt(((xx - 69.5) / 69.5) ** 2 + ((yy - 69.5) / 69.5) ** 2)
+    halo = np.clip(1.0 - dist, 0.0, 1.0) ** 2
+    accent[..., 0] = 255
+    accent[..., 1] = 226
+    accent[..., 2] = np.clip(170 + 60 * halo, 0, 255).astype(np.uint8)
+    accent[..., 3] = (halo * 255).astype(np.uint8)
+
+    card_top, card_left, card_bottom, card_right = 60, 468, 240, 618
+    card = np.zeros(
+        (card_bottom - card_top, card_right - card_left, 4), dtype=np.uint8
+    )
+    card[...] = (242, 132, 64, 255)
+
+    group_mask = np.zeros((height, width), dtype=np.uint8)
+    group_mask[:, :] = 255
+    group_mask[:, width // 2 :] = np.linspace(
+        255, 90, width - width // 2, dtype=np.float32
+    ).astype(np.uint8)
+
+    title_props = TextProperties(
+        text="My Photo Studio",
+        font_family="Arial",
+        font_size=40,
+        color=(255, 255, 255, 255),
+        bold=True,
+        alignment="left",
+    )
+    title_rgba = render_text(title_props)
+    title_h, title_w = title_rgba.shape[:2]
+    title_top, title_left = 34, 38
+    title_bottom, title_right = title_top + title_h, title_left + title_w
+    title_bounds = (title_top, title_left, title_bottom, title_right)
+
+    entries = [
+        record(
+            "Nền gradient",
+            (0, 0, height, width),
+            {
+                0: background[..., 0],
+                1: background[..., 1],
+                2: background[..., 2],
+                -1: background[..., 3],
+            },
+        ),
+        record("Họa tiết", (0, 0, 0, 0), {}, section=3),
+        record(
+            "Vệt sáng",
+            (70, 60, 290, 360),
+            {
+                0: glow[..., 0],
+                1: glow[..., 1],
+                2: glow[..., 2],
+                -1: glow[..., 3],
+            },
+            blend=b"scrn",
+        ),
+        record(
+            "Ô màu có mask",
+            (330, 160, 500, 540),
+            {
+                0: masked[..., 0],
+                1: masked[..., 1],
+                2: masked[..., 2],
+                -1: masked[..., 3],
+            },
+            mask=((160, 330, 330, 540), square_mask),
+        ),
+        record(
+            "Họa tiết",
+            (0, 0, 0, 0),
+            {},
+            section=1,
+            mask=((0, 0, height, width), group_mask),
+        ),
+        record(
+            "Điểm nhấn",
+            (250, 420, 390, 560),
+            {
+                0: accent[..., 0],
+                1: accent[..., 1],
+                2: accent[..., 2],
+                -1: accent[..., 3],
+            },
+            blend=b"sLit",
+            opacity=210,
+        ),
+        record(
+            "Thẻ màu (live shape)",
+            (card_top, card_left, card_bottom, card_right),
+            {
+                0: card[..., 0],
+                1: card[..., 1],
+                2: card[..., 2],
+                -1: card[..., 3],
+            },
+            tags=(
+                (
+                    b"vogk",
+                    round_rect_vogk(
+                        card_top,
+                        card_left,
+                        card_bottom,
+                        card_right,
+                        18.0,
+                        stroke=(4.0, (255, 255, 255)),
+                    ),
+                ),
+            ),
+        ),
+        record(
+            "Tiêu đề (text)",
+            title_bounds,
+            {
+                0: title_rgba[..., 0],
+                1: title_rgba[..., 1],
+                2: title_rgba[..., 2],
+                -1: title_rgba[..., 3],
+            },
+            tags=(
+                (
+                    b"TySh",
+                    text_tysh(
+                        "My Photo Studio",
+                        text_style_data("Arial-BoldMT", 9.6, (1.0, 1.0, 1.0)),
+                        title_bounds,
+                    ),
+                ),
+            ),
+        ),
+    ]
+
+    records = b"".join(entry[0] for entry in entries)
+    channel_data = b"".join(entry[1] for entry in entries)
+    layer_info = i16(len(entries)) + records + channel_data
+    section = u32(len(layer_info)) + layer_info + u32(0)
+    header = (
+        b"8BPS"
+        + u16(1)
+        + b"\x00" * 6
+        + u16(4)
+        + u32(height)
+        + u32(width)
+        + u16(8)
+        + u16(3)
+    )
+    image = u16(0) + b"".join(
+        np.ascontiguousarray(background[..., channel]).tobytes()
+        for channel in range(4)
+    )
+    fixed_dpi = int(round(300 * 65536))
+    resource_data = struct.pack(">iHH", fixed_dpi, 1, 1) + struct.pack(
+        ">iHH", fixed_dpi, 1, 1
+    )
+    resource = (
+        b"8BIM" + u16(1005) + b"\x00\x00" + u32(len(resource_data)) + resource_data
+    )
+    path.write_bytes(
+        header
+        + u32(0)
+        + u32(len(resource))
+        + resource
+        + u32(len(section))
+        + section
+        + image
+    )
+    return path
 
 
 def main() -> None:
@@ -2329,8 +2937,51 @@ def main() -> None:
     window.grab().save(str(groups_path))
     print("saved", groups_path)
 
+    badges = [
+        layer
+        for layer in groups_document.layers
+        if layer.name.startswith("Huy hiệu ")
+    ]
+    groups_document.set_selected_layers(badges, active=badges[0])
+    window._update_action_states()
+    window._show_transient_message(
+        "Giữ Shift + nhấp để chọn dải layer · Ctrl + nhấp để bật/tắt từng layer · "
+        "xoá, nhân bản, khoá, opacity, gộp và Group Layers áp dụng cho cả vùng chọn."
+    )
+    app.processEvents()
+    multi_path = OUTPUT_DIR / "phase6_layer_multi_select.png"
+    window.grab().save(str(multi_path))
+    print("saved", multi_path)
+
     window._remove_view(groups_view)
     groups_document.mark_clean()
+
+    style_document, style_card = build_phase6_layer_style_document()
+    window._add_document_tab(style_document)
+    app.processEvents()
+    style_view = window.current_view
+    style_view.fit_to_window()
+    window._update_action_states()
+    window._show_transient_message(
+        "Layer Style: chuột phải layer → Blending Options… mở hộp thoại "
+        "hiệu ứng, Blend If, Fill Opacity, Knockout và preset."
+    )
+    app.processEvents()
+    style_path = OUTPUT_DIR / "phase6_layer_style.png"
+    window.grab().save(str(style_path))
+    print("saved", style_path)
+
+    style_dialog = LayerStyleDialog(window, style_document, style_card)
+    style_dialog.effect_list.setCurrentRow(1)  # trang Drop Shadow
+    style_dialog.show()
+    app.processEvents()
+    style_dialog_path = OUTPUT_DIR / "phase6_layer_style_dialog.png"
+    style_dialog.grab().save(str(style_dialog_path))
+    print("saved", style_dialog_path)
+    style_dialog.close()
+
+    window._remove_view(style_view)
+    style_document.mark_clean()
 
     fill_smart_document, fill_layer, smart_layer = (
         build_phase6_fill_smart_document()
@@ -2454,6 +3105,42 @@ def main() -> None:
     tiles_document.mark_clean()
 
     document.mark_clean()
+
+    psd_path = build_phase6_psd_demo(OUTPUT_DIR / "demo_open.psd")
+    window.open_paths([psd_path])
+    app.processEvents()
+    psd_view = window.current_view
+    psd_view.fit_to_window()
+    window._update_action_states()
+    window._show_transient_message(
+        "Mở file PSD: giữ layer, nhóm, mask, blend mode, opacity, chuyển hình chữ "
+        "nhật vector thành layer hình khối và layer chữ thành văn bản chỉnh sửa "
+        "được · file gốc không bao giờ bị ghi đè."
+    )
+    app.processEvents()
+    psd_shot = OUTPUT_DIR / "phase6_psd_open.png"
+    window.grab().save(str(psd_shot))
+    print("saved", psd_shot)
+
+    psd_document = psd_view.document
+    text_layer = next(
+        (layer for layer in psd_document.layers if layer.kind == LayerKind.TEXT),
+        None,
+    )
+    if text_layer is not None:
+        psd_document.set_active_layer(text_layer)
+        window._update_action_states()
+        window._show_transient_message(
+            f"Layer chữ PSD '{text_layer.name}' được giữ dưới dạng văn bản: "
+            "sửa nội dung, font, cỡ, màu, căn lề và uốn chữ ngay trong app."
+        )
+        app.processEvents()
+        text_shot = OUTPUT_DIR / "phase6_psd_text.png"
+        window.grab().save(str(text_shot))
+        print("saved", text_shot)
+
+    window._remove_view(psd_view)
+
     window.close()
     app.processEvents()
     (OUTPUT_DIR / "presets.sqlite3").unlink(missing_ok=True)

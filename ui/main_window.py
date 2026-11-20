@@ -55,12 +55,12 @@ from formats.import_manager import (
     load_image_rgba,
 )
 from formats.native_project import ProjectFormatError, ensure_project_extension, load_project, save_project
+from formats.psd_import import PsdImportError, load_psd_document
 from ui import icons, theme
 from ui.canvas_view import CanvasView
 from ui.dialogs import (
     AdjustmentLayerDialog,
     BatchDialog,
-    BlendingOptionsDialog,
     BrightnessContrastDialog,
     CanvasSizeDialog,
     FeatherDialog,
@@ -77,6 +77,7 @@ from ui.dialogs import (
 )
 from ui.document_tabs import DocumentTabs
 from ui.layers_panel import LayersPanel
+from ui.layer_style_dialog import LayerStyleDialog
 from ui.menu_bar import build_menu_bar
 from ui.options_bar import OptionsBar
 from ui.properties_panel import PropertiesPanel
@@ -827,12 +828,15 @@ class MainWindow(QMainWindow):
                 )
                 self._refresh_recent_ui()
                 continue
+            report = None
             try:
                 if path.suffix.lower() == ".mps":
                     document = load_project(path)
+                elif path.suffix.lower() == ".psd":
+                    document, report = load_psd_document(path)
                 else:
                     document = load_image_document(path)
-            except (ProjectFormatError, ImageImportError) as exc:
+            except (ProjectFormatError, ImageImportError, PsdImportError) as exc:
                 QMessageBox.critical(self, "Không thể mở file", str(exc))
                 continue
             except Exception as exc:  # noqa: BLE001 - hiển thị lỗi thân thiện cho người dùng
@@ -845,10 +849,31 @@ class MainWindow(QMainWindow):
                 continue
             self.settings_store.add_recent(str(path))
             self._add_document_tab(document)
+            if report is not None:
+                self._report_psd_import(document, report)
             opened = True
         if opened:
             self._refresh_recent_ui()
             self._update_action_states()
+
+    def _report_psd_import(self, document: Document, report) -> None:
+        parts = [f"{report.layers} layer", f"{report.groups} nhóm"]
+        if report.texts:
+            parts.append(f"{report.texts} chữ")
+        if report.shapes:
+            parts.append(f"{report.shapes} hình khối")
+        message = f"Đã mở PSD: {document.name} — " + ", ".join(parts) + "."
+        self._show_transient_message(message)
+        if not report.has_issues():
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Báo cáo nhập PSD")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(message)
+        box.setInformativeText(report.summary())
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
 
     def _add_document_tab(self, document: Document) -> None:
         view = CanvasView(document, self.tabs)
@@ -1258,14 +1283,18 @@ class MainWindow(QMainWindow):
         document = self.current_document
         if document is None or document.active_layer is None:
             return
+        members = document.selected_layers
         try:
-            group = document.group_layers()
+            group = document.group_layers(members or None)
         except ValueError as exc:
             QMessageBox.warning(self, "Không thể nhóm layer", str(exc))
             return
         if group is not None:
+            count = len(members)
             self._show_transient_message(
-                f"Đã đưa layer vào nhóm '{group.name}' (Ctrl+Z để hoàn tác)."
+                f"Đã đưa {count} layer vào nhóm '{group.name}' (Ctrl+Z để hoàn tác)."
+                if count > 1
+                else f"Đã đưa layer vào nhóm '{group.name}' (Ctrl+Z để hoàn tác)."
             )
 
     def _on_ungroup_layers(self) -> None:
@@ -1303,17 +1332,27 @@ class MainWindow(QMainWindow):
 
     def _on_duplicate_layer(self) -> None:
         document = self.current_document
-        if document is None or document.active_layer is None:
+        if document is None or not document.selected_layers:
             return
-        document.duplicate_layer()
-        self._show_transient_message("Đã nhân bản layer.")
+        clones = document.duplicate_layers()
+        self._show_transient_message(
+            f"Đã nhân bản {len(clones)} layer."
+            if len(clones) > 1
+            else "Đã nhân bản layer."
+        )
 
     def _on_delete_layer(self) -> None:
         document = self.current_document
-        if document is None or document.active_layer is None:
+        if document is None or not document.selected_layers:
             return
-        document.remove_layer()
-        self._show_transient_message("Đã xoá layer (Ctrl+Z để hoàn tác).")
+        count = document.remove_layers()
+        if count == 0:
+            return
+        self._show_transient_message(
+            f"Đã xoá {count} layer (Ctrl+Z để hoàn tác)."
+            if count > 1
+            else "Đã xoá layer (Ctrl+Z để hoàn tác)."
+        )
 
     def _on_rename_layer(self) -> None:
         document = self.current_document
@@ -1328,19 +1367,40 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_lock_layer(self, checked: bool) -> None:
         document = self.current_document
-        if document is None or document.active_layer is None:
+        if document is None or not document.selected_layers:
             return
-        layer = document.active_layer
-        document.set_layer_locked(layer, checked)
-        self._show_transient_message(
-            f"Đã khoá layer '{layer.name}'. Các thao tác vẽ/lọc/di chuyển bị chặn."
-            if checked
-            else f"Đã mở khoá layer '{layer.name}'."
-        )
+        layers = document.selected_layers
+        count = document.set_layers_locked(checked)
+        if count == 0:
+            return
+        if count == 1:
+            layer = layers[0]
+            self._show_transient_message(
+                f"Đã khoá layer '{layer.name}'. Các thao tác vẽ/lọc/di chuyển bị chặn."
+                if checked
+                else f"Đã mở khoá layer '{layer.name}'."
+            )
+        else:
+            self._show_transient_message(
+                f"Đã khoá {count} layer. Các thao tác vẽ/lọc/di chuyển bị chặn."
+                if checked
+                else f"Đã mở khoá {count} layer."
+            )
 
     def _on_merge_down(self) -> None:
         document = self.current_document
         if document is None:
+            return
+        selected = document.selected_layers
+        if len(selected) > 1:
+            if document.merge_layers():
+                self._show_transient_message(
+                    f"Đã gộp {len(selected)} layer (Ctrl+Z để hoàn tác)."
+                )
+            else:
+                self._show_transient_message(
+                    "Chỉ gộp được các layer cùng nhóm và không chứa nhóm con."
+                )
             return
         if not document.merge_down():
             self._show_transient_message(
@@ -1373,24 +1433,36 @@ class MainWindow(QMainWindow):
         if document is None or document.active_layer is None:
             return
         layer = document.active_layer
-        dialog = BlendingOptionsDialog(
+        dialog = LayerStyleDialog(
             self,
-            layer.blend_mode,
-            layer.opacity,
-            allow_blend=layer.kind != LayerKind.ADJUSTMENT,
+            document,
+            layer,
+            preset_store=self.preset_store,
         )
         if exec_object(dialog) != QDialog.DialogCode.Accepted:
             return
         try:
-            changed = document.set_layer_blending(
-                layer, dialog.blend_mode, dialog.opacity
+            changed = document.set_layer_style(
+                layer,
+                dialog.style,
+                blend_mode=dialog.blend_mode,
+                opacity=dialog.opacity,
             )
         except ValueError as exc:
-            QMessageBox.warning(self, "Blending Options", str(exc))
+            QMessageBox.warning(self, "Layer Style", str(exc))
             return
-        if changed:
+        if not changed:
+            return
+        style = layer.style
+        effect_count = len(style.enabled_effects) if style is not None else 0
+        if effect_count:
             self._show_transient_message(
-                f"Đã cập nhật hoà trộn cho layer '{layer.name}'."
+                f"Đã áp {effect_count} hiệu ứng Layer Style cho layer "
+                f"'{layer.name}' (Ctrl+Z để hoàn tác)."
+            )
+        else:
+            self._show_transient_message(
+                f"Đã cập nhật Layer Style cho layer '{layer.name}'."
             )
 
     def _copy_layer_code(self, converter, label: str) -> None:

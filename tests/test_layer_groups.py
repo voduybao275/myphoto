@@ -338,7 +338,7 @@ def test_project_roundtrip_preserves_group_hierarchy(tmp_path):
 
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 9
+    assert manifest["version"] == 10
     entries = {entry["name"]: entry for entry in manifest["layers"]}
     assert entries["Blue"]["group_id"] == entries["Inner"]["id"]
     assert entries["Background"]["group_id"] is None

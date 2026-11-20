@@ -51,6 +51,7 @@ from core.layer import (
     LayerKind,
     LayerManager,
 )
+from core.layer_style import LayerStyle
 from core.paint import BrushSettings, BrushStrokeSession, PAINT_TARGETS
 from core.gradient import GradientSession, GradientSettings
 from core.selection import MAX_FEATHER_RADIUS, Selection
@@ -219,6 +220,7 @@ class Document(QObject):
     content_changed = Signal()
     structure_changed = Signal()
     active_layer_changed = Signal()
+    layer_selection_changed = Signal()
     modified_changed = Signal(bool)
     title_changed = Signal()
     history_changed = Signal()
@@ -252,6 +254,7 @@ class Document(QObject):
 
         self._name = name
         self._active_layer_id: str | None = None
+        self._selected_layer_ids: set[str] = set()
         self._selection: Selection | None = None
         self._modified = False
         self._revision = 0
@@ -292,6 +295,19 @@ class Document(QObject):
         return self.layers.get(self._active_layer_id)
 
     @property
+    def selected_layers(self) -> list[Layer]:
+        """Các layer đang chọn, theo thứ tự chồng từ dưới lên của tài liệu."""
+        if not self._selected_layer_ids:
+            return []
+        return [
+            layer for layer in self.layers if layer.id in self._selected_layer_ids
+        ]
+
+    @property
+    def selected_layer_count(self) -> int:
+        return len(self.selected_layers)
+
+    @property
     def history_index(self) -> int:
         return len(self.history)
 
@@ -305,20 +321,70 @@ class Document(QObject):
         return total
 
     # --------------------------------------------------------------- active layer
-    def set_active_layer(self, layer: Layer | str | None) -> None:
+    def _resolve_layer(self, layer: Layer | str) -> Layer:
         if isinstance(layer, str):
             target = self.layers.get(layer)
             if target is None:
                 raise ValueError("Không tìm thấy layer.")
-        elif layer is not None:
-            self.layers.index_of(layer)  # xác thực layer thuộc tài liệu
-            target = layer
-        else:
-            target = None
+            return target
+        self.layers.index_of(layer)  # xác thực layer thuộc tài liệu
+        return layer
+
+    def set_active_layer(self, layer: Layer | str | None) -> None:
+        target = None if layer is None else self._resolve_layer(layer)
         new_id = target.id if target is not None else None
+        new_selection = {new_id} if new_id is not None else set()
+        selection_changed = new_selection != self._selected_layer_ids
+        self._selected_layer_ids = new_selection
         if new_id != self._active_layer_id:
             self._active_layer_id = new_id
             self.active_layer_changed.emit()
+        if selection_changed:
+            self.layer_selection_changed.emit()
+
+    def set_selected_layers(
+        self,
+        layers: list[Layer | str] | None,
+        *,
+        active: Layer | str | None = None,
+    ) -> None:
+        """Đặt vùng chọn nhiều layer; ``active`` là layer dẫn nhận thao tác đơn."""
+        ids: list[str] = []
+        for entry in layers or ():
+            target = self._resolve_layer(entry)
+            if target.id not in ids:
+                ids.append(target.id)
+
+        if active is None:
+            active_id = (
+                self._active_layer_id
+                if self._active_layer_id in ids
+                else (ids[-1] if ids else None)
+            )
+        else:
+            target = self._resolve_layer(active)
+            active_id = target.id
+            if active_id not in ids:
+                ids.append(active_id)
+
+        set_changed = set(ids) != self._selected_layer_ids
+        active_changed = active_id != self._active_layer_id
+        self._selected_layer_ids = set(ids)
+        self._active_layer_id = active_id
+        if active_changed:
+            self.active_layer_changed.emit()
+        if set_changed:
+            self.layer_selection_changed.emit()
+
+    def _target_layers(self, layers: list[Layer] | None = None) -> list[Layer]:
+        """Layer đích cho thao tác hàng loạt (mặc định là vùng chọn hiện tại)."""
+        if layers is not None:
+            return [layer for layer in layers if layer is not None]
+        selected = self.selected_layers
+        if selected:
+            return selected
+        active = self.active_layer
+        return [active] if active is not None else []
 
     # ------------------------------------------------------------------- layers
     def _insert_index_above_active(self) -> int:
@@ -409,6 +475,7 @@ class Document(QObject):
         y: int | None = None,
         *,
         name: str | None = None,
+        index: int | None = None,
         select: bool = True,
         record: bool = True,
     ) -> Layer:
@@ -425,7 +492,7 @@ class Document(QObject):
         layer.offset_x = offset_x
         layer.offset_y = offset_y
         return self.add_layer(
-            layer, name=name, select=select, record=record
+            layer, name=name, index=index, select=select, record=record
         )
 
     def _next_adjustment_name(self, base: str) -> str:
@@ -621,6 +688,176 @@ class Document(QObject):
         self._apply_command(command, record=record)
         return True
 
+    def duplicate_layers(
+        self, layers: list[Layer] | None = None, *, record: bool = True
+    ) -> list[Layer]:
+        """Nhân bản nhiều layer trong một bước Undo; trả về các bản sao."""
+        targets = self._target_layers(layers)
+        if not targets:
+            return []
+        target_ids = {layer.id for layer in targets}
+        filtered: list[Layer] = []
+        for target in targets:
+            self.layers.index_of(target)
+            parent_id = target.group_id
+            inside_selected_group = False
+            while parent_id:
+                if parent_id in target_ids:
+                    inside_selected_group = True
+                    break
+                parent = self.layers.get(parent_id)
+                parent_id = parent.group_id if parent is not None else None
+            if not inside_selected_group and all(
+                target.id != existing.id for existing in filtered
+            ):
+                filtered.append(target)
+
+        commands: list = []
+        clones: list[Layer] = []
+        for target in sorted(filtered, key=self.layers.index_of, reverse=True):
+            if target.kind == LayerKind.GROUP:
+                subtree = self._subtree_layers(target)
+                clone_map = {item.id: item.copy() for item in subtree}
+                for item in subtree:
+                    parent_id = item.group_id
+                    clone_map[item.id].group_id = (
+                        clone_map[parent_id].id
+                        if parent_id in clone_map
+                        else parent_id
+                    )
+                base = self.layers.index_of(subtree[-1]) + 1
+                commands.extend(
+                    AddLayerCommand(
+                        clone_map[item.id],
+                        base + offset,
+                        label="Nhân bản nhóm",
+                    )
+                    for offset, item in enumerate(subtree)
+                )
+                clones.append(clone_map[target.id])
+            else:
+                index = self.layers.index_of(target)
+                clone = target.copy()
+                commands.append(
+                    AddLayerCommand(clone, index + 1, label="Nhân bản layer")
+                )
+                clones.append(clone)
+        if not commands:
+            return []
+        self._apply_command(
+            MacroCommand(commands, label="Nhân bản layer"), record=record
+        )
+        self.set_selected_layers(clones, active=clones[0])
+        return clones
+
+    def remove_layers(
+        self, layers: list[Layer] | None = None, *, record: bool = True
+    ) -> int:
+        """Xoá nhiều layer (mở rộng cả nhóm) trong một bước Undo."""
+        targets = self._target_layers(layers)
+        if not targets:
+            return 0
+        old_order = list(self.layers)
+        removed_ids: set[str] = set()
+        for target in targets:
+            self.layers.index_of(target)
+            subtree = (
+                self._subtree_layers(target)
+                if target.kind == LayerKind.GROUP
+                else [target]
+            )
+            removed_ids.update(layer.id for layer in subtree)
+        removed = [layer for layer in old_order if layer.id in removed_ids]
+        if not removed:
+            return 0
+        lowest_index = min(self.layers.index_of(layer) for layer in removed)
+        commands = [
+            RemoveLayerCommand(layer, self.layers.index_of(layer), label="Xoá layer")
+            for layer in reversed(removed)
+        ]
+        self._apply_command(
+            MacroCommand(commands, label="Xoá layer"), record=record
+        )
+        remaining = list(self.layers)
+        if remaining:
+            below = [
+                layer
+                for layer in old_order[:lowest_index]
+                if layer.id not in removed_ids
+            ]
+            replacement = below[-1] if below else remaining[0]
+            self.set_active_layer(replacement)
+        return len(removed)
+
+    def _set_layers_property(
+        self,
+        layers: list[Layer],
+        prop: str,
+        value,
+        label: str,
+    ) -> int:
+        commands = []
+        for layer in layers:
+            current = getattr(layer, prop)
+            if current == value:
+                continue
+            commands.append(
+                SetLayerPropertyCommand(
+                    layer, prop, current, value, label=label
+                )
+            )
+        if not commands:
+            return 0
+        self._apply_command(MacroCommand(commands, label=label))
+        return len(commands)
+
+    def set_layers_visible(
+        self, visible: bool, layers: list[Layer] | None = None
+    ) -> int:
+        visible = bool(visible)
+        return self._set_layers_property(
+            self._target_layers(layers),
+            "visible",
+            visible,
+            "Hiện layer" if visible else "Ẩn layer",
+        )
+
+    def set_layers_locked(
+        self, locked: bool, layers: list[Layer] | None = None
+    ) -> int:
+        locked = bool(locked)
+        return self._set_layers_property(
+            self._target_layers(layers),
+            "locked",
+            locked,
+            "Khoá layer" if locked else "Mở khoá layer",
+        )
+
+    def set_layers_opacity(
+        self, opacity: float, layers: list[Layer] | None = None
+    ) -> int:
+        opacity = float(max(0.0, min(1.0, opacity)))
+        return self._set_layers_property(
+            self._target_layers(layers),
+            "opacity",
+            opacity,
+            "Đổi độ mờ layer",
+        )
+
+    def set_layers_blend_mode(
+        self, blend_mode: str, layers: list[Layer] | None = None
+    ) -> int:
+        if blend_mode not in BLEND_MODE_IDS:
+            raise ValueError(f"Blend mode không hợp lệ: {blend_mode}")
+        targets = [
+            layer
+            for layer in self._target_layers(layers)
+            if layer.kind != LayerKind.ADJUSTMENT
+        ]
+        return self._set_layers_property(
+            targets, "blend_mode", blend_mode, "Đổi chế độ trộn"
+        )
+
     def rename_layer(self, layer: Layer | None, new_name: str) -> bool:
         target = layer or self.active_layer
         if target is None:
@@ -761,6 +998,54 @@ class Document(QObject):
         self._apply_command(MacroCommand(commands, label="Blending Options"))
         return True
 
+    def set_layer_style(
+        self,
+        layer: Layer | None = None,
+        style: LayerStyle | None = None,
+        *,
+        blend_mode: str | None = None,
+        opacity: float | None = None,
+        record: bool = True,
+    ) -> bool:
+        """Áp Layer Style (kèm blend mode/opacity) trong cùng một bước Undo."""
+        target = layer or self.active_layer
+        if target is None:
+            return False
+        if style is not None and not isinstance(style, LayerStyle):
+            raise ValueError("Dữ liệu layer style không hợp lệ.")
+        new_style = None if style is None or style.is_identity else style
+        mode = target.blend_mode if blend_mode is None else str(blend_mode)
+        if mode not in BLEND_MODE_IDS:
+            raise ValueError(f"Blend mode không hợp lệ: {mode}")
+        if target.kind == LayerKind.ADJUSTMENT and mode != target.blend_mode:
+            raise ValueError("Layer điều chỉnh không dùng blend mode.")
+        alpha = (
+            target.opacity if opacity is None else max(0.0, min(1.0, float(opacity)))
+        )
+        commands = []
+        if mode != target.blend_mode:
+            commands.append(
+                SetLayerPropertyCommand(
+                    target, "blend_mode", target.blend_mode, mode, "Layer Style"
+                )
+            )
+        if abs(alpha - target.opacity) > 1e-6:
+            commands.append(
+                SetLayerPropertyCommand(
+                    target, "opacity", target.opacity, alpha, "Layer Style"
+                )
+            )
+        if new_style != target.style:
+            commands.append(
+                SetLayerPropertyCommand(
+                    target, "style", target.style, new_style, "Layer Style"
+                )
+            )
+        if not commands:
+            return False
+        self._apply_command(MacroCommand(commands, label="Layer Style"), record=record)
+        return True
+
     def set_layer_opacity(self, layer: Layer, opacity: float) -> bool:
         opacity = float(max(0.0, min(1.0, opacity)))
         if abs(layer.opacity - opacity) < 1e-6:
@@ -854,6 +1139,41 @@ class Document(QObject):
             AddLayerCommand(merged, index - 1, label="Merge Down"),
         ]
         self._apply_command(MacroCommand(commands, label="Merge Down"))
+        self.set_active_layer(merged)
+        return True
+
+    def merge_layers(
+        self, layers: list[Layer] | None = None, *, record: bool = True
+    ) -> bool:
+        """Gộp nhiều layer cùng nhóm thành một, đặt tại vị trí layer trên cùng."""
+        targets = self._target_layers(layers)
+        ordered = [layer for layer in self.layers if any(layer is t for t in targets)]
+        if len(ordered) < 2:
+            return False
+        if len({layer.group_id for layer in ordered}) != 1:
+            return False
+        if any(layer.kind == LayerKind.GROUP for layer in ordered):
+            return False
+
+        top = ordered[-1]
+        top_index = self.layers.index_of(top)
+        merged_pixels = composite_layers(ordered, self.width, self.height)
+        merged = Layer(self.width, self.height, ordered[0].name)
+        merged.set_pixels(merged_pixels)
+        merged.group_id = top.group_id
+
+        removed_ids = {layer.id for layer in ordered}
+        commands = [
+            RemoveLayerCommand(layer, self.layers.index_of(layer), label="Merge Layers")
+            for layer in reversed(ordered)
+        ]
+        insert_at = sum(
+            1
+            for index, layer in enumerate(self.layers)
+            if index < top_index and layer.id not in removed_ids
+        )
+        commands.append(AddLayerCommand(merged, insert_at, label="Merge Layers"))
+        self._apply_command(MacroCommand(commands, label="Merge Layers"), record=record)
         self.set_active_layer(merged)
         return True
 
@@ -2627,6 +2947,10 @@ class Document(QObject):
             layer.color_label = str(value)
         elif attribute == "group_id":
             layer.group_id = str(value) if value else None
+        elif attribute == "style":
+            if value is not None and not isinstance(value, LayerStyle):
+                raise ValueError("Dữ liệu layer style không hợp lệ.")
+            layer.style = value
         else:
             raise ValueError(f"Thuộc tính layer không hỗ trợ: {attribute}")
 
@@ -2735,11 +3059,20 @@ class Document(QObject):
 
     # ------------------------------------------------------------------ helpers
     def _ensure_active_valid(self) -> None:
+        active_replaced = False
         if self._active_layer_id is not None and self.layers.get(self._active_layer_id) is None:
             if len(self.layers):
                 self._active_layer_id = self.layers[len(self.layers) - 1].id
+                active_replaced = True
             else:
                 self._active_layer_id = None
+        valid_ids = {layer.id for layer in self.layers}
+        pruned = self._selected_layer_ids & valid_ids
+        if (active_replaced or not pruned) and self._active_layer_id is not None:
+            pruned = {self._active_layer_id}
+        if pruned != self._selected_layer_ids:
+            self._selected_layer_ids = pruned
+            self.layer_selection_changed.emit()
 
     def _apply_command(self, command, record: bool = True) -> None:
         old_selection = self._selection

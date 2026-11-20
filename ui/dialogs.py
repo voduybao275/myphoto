@@ -82,7 +82,6 @@ from core.fill_layer import (
     render_fill,
 )
 from core.histogram import compute_histogram
-from core.layer import BLEND_MODES
 from core.selection import MAX_FEATHER_RADIUS
 from core.shape_layer import (
     MAX_CORNER_RADIUS,
@@ -146,63 +145,6 @@ CURVE_CHANNEL_SPECS = (
     ("green", "Xanh lá", "#7ec699"),
     ("blue", "Xanh dương", "#79b8ff"),
 )
-
-
-class BlendingOptionsDialog(QDialog):
-    """Chọn blend mode và opacity cho layer (không có layer style nâng cao)."""
-
-    def __init__(
-        self,
-        parent: QWidget | None,
-        blend_mode: str,
-        opacity: float,
-        *,
-        allow_blend: bool = True,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Blending Options")
-        self.setModal(True)
-        self.setMinimumWidth(320)
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.blend_combo = QComboBox()
-        for mode_id, label in BLEND_MODES:
-            self.blend_combo.addItem(label, mode_id)
-        self.blend_combo.setCurrentIndex(
-            max(0, self.blend_combo.findData(blend_mode))
-        )
-        if not allow_blend:
-            self.blend_combo.setEnabled(False)
-            self.blend_combo.setToolTip(
-                "Layer điều chỉnh không dùng blend mode; chỉ có thể đổi Opacity."
-            )
-        form.addRow("Blend Mode:", self.blend_combo)
-
-        self.opacity_spin = QSpinBox()
-        self.opacity_spin.setRange(0, 100)
-        self.opacity_spin.setSuffix(" %")
-        self.opacity_spin.setValue(int(round(opacity * 100)))
-        form.addRow("Opacity:", self.opacity_spin)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("OK")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Huỷ")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @property
-    def blend_mode(self) -> str:
-        return str(self.blend_combo.currentData())
-
-    @property
-    def opacity(self) -> float:
-        return self.opacity_spin.value() / 100.0
 
 
 class NewDocumentDialog(QDialog):

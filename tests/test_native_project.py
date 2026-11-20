@@ -96,7 +96,7 @@ def test_saved_archive_contains_manifest(tmp_path):
         assert "manifest.json" in names
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
     assert manifest["format"] == "myphoto-project"
-    assert manifest["version"] == 9
+    assert manifest["version"] == 10
     assert len(manifest["layers"]) == 3
     entries = {entry["name"]: entry for entry in manifest["layers"]}
     assert entries["Accent"]["color_label"] == "blue"
@@ -275,7 +275,7 @@ def test_text_layer_roundtrip(tmp_path):
     target = save_project(document, tmp_path / "van-ban.mps")
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 9
+    assert manifest["version"] == 10
     entry = manifest["layers"][-1]
     assert entry["kind"] == "text"
     assert entry["text"] == properties.to_dict()
@@ -479,7 +479,7 @@ def test_shape_layer_roundtrip(tmp_path):
     target = save_project(document, tmp_path / "hinh-khoi.mps")
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 9
+    assert manifest["version"] == 10
     entry = manifest["layers"][-1]
     assert entry["kind"] == "shape"
     assert entry["shape"] == properties.to_dict()
@@ -589,7 +589,7 @@ def test_clipping_mask_roundtrip(tmp_path):
     target = save_project(document, tmp_path / "clipping.mps")
     with zipfile.ZipFile(target) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-    assert manifest["version"] == 9
+    assert manifest["version"] == 10
     entries = {entry["name"]: entry for entry in manifest["layers"]}
     assert entries["Clip"]["clipping"] is True
     assert entries["Base"]["clipping"] is False

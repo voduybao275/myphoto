@@ -10,6 +10,7 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover
     from core.adjustment_layer import AdjustmentProperties
     from core.fill_layer import FillProperties
+    from core.layer_style import LayerStyle
     from core.shape_layer import ShapeProperties
     from core.smart_object import SmartObjectProperties
     from core.text_layer import TextProperties
@@ -84,6 +85,7 @@ class Layer:
         self.fill_props: FillProperties | None = None
         self.smart_props: SmartObjectProperties | None = None
         self.smart_source: np.ndarray | None = None
+        self.style: LayerStyle | None = None
         self.group_id: str | None = None
         self.width: int = int(width)
         self.height: int = int(height)
@@ -156,6 +158,7 @@ class Layer:
         clone.smart_source = (
             self.smart_source.copy() if self.smart_source is not None else None
         )
+        clone.style = self.style
         clone.group_id = self.group_id
         clone.pixels = self.pixels.copy()
         clone.offset_x = self.offset_x

@@ -403,7 +403,7 @@ def test_project_roundtrip_v6_preserves_fill_and_smart(tmp_path):
 
     with zipfile.ZipFile(path) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-        assert manifest["version"] == 9
+        assert manifest["version"] == 10
         names = {entry["name"]: entry for entry in manifest["layers"]}
         assert names["Nền gradient"]["kind"] == "fill"
         assert names["Logo"]["kind"] == "smart"

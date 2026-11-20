@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 import compat.qt  # noqa: F401  - chọn binding Qt trước mọi import PySide6
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QItemSelectionModel,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -20,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config.settings import THEME_DARK
 from core.adjustment_layer import ADJUSTMENT_LABELS
 from core.canvas import downsample_rgba, numpy_rgba_to_qimage
 from core.document import Document
@@ -52,6 +61,21 @@ LAYER_COLOR_SWATCHES = {
     "violet": "#8f63c9",
     "gray": "#808080",
 }
+
+def header_icon(name: str) -> QIcon:
+    theme = current_theme()
+    return icons.icon(name, "#ffffff" if theme.name == THEME_DARK else theme.text)
+
+
+def _selection_flag(name: str):
+    flags = getattr(QItemSelectionModel, "SelectionFlag", None)
+    if flags is not None and hasattr(flags, name):
+        return getattr(flags, name)
+    return getattr(QItemSelectionModel, name)
+
+
+NO_UPDATE = _selection_flag("NoUpdate")
+
 
 ROW_HEIGHT = 48
 THUMB_SIZE = 36
@@ -193,7 +217,7 @@ class LayerItemDelegate(QStyledItemDelegate):
 
 class LayerListWidget(QListWidget):
     eye_clicked = Signal(str)
-    layer_selected = Signal(str)
+    selection_changed = Signal(list, object)
     rename_requested = Signal(str)
     adjustment_requested = Signal(str)
     fill_requested = Signal(str)
@@ -205,7 +229,7 @@ class LayerListWidget(QListWidget):
         super().__init__(parent)
         self.setItemDelegate(LayerItemDelegate(self))
         self.setUniformItemSizes(True)
-        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setDragEnabled(True)
@@ -218,7 +242,7 @@ class LayerListWidget(QListWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
         self._updating = False
-        self.currentItemChanged.connect(self._on_current_item_changed)
+        self.itemSelectionChanged.connect(self._on_selection_changed)
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
 
     def _layer_id(self, index) -> str | None:
@@ -242,20 +266,56 @@ class LayerListWidget(QListWidget):
         if after != before and all(after):
             QTimer.singleShot(0, lambda ids=list(after): self.order_changed.emit(ids))
 
+    def set_selection(self, layer_ids: list[str], current_id: str | None) -> None:
+        """Đồng bộ vùng chọn từ tài liệu mà không phát lại tín hiệu."""
+        self._updating = True
+        try:
+            wanted = set(layer_ids)
+            current_item = None
+            for index in range(self.count()):
+                item = self.item(index)
+                layer_id = str(item.data(ROLE_LAYER_ID))
+                item.setSelected(layer_id in wanted)
+                if layer_id == current_id:
+                    current_item = item
+            model = self.selectionModel()
+            if current_item is not None:
+                model.setCurrentIndex(
+                    self.indexFromItem(current_item), NO_UPDATE
+                )
+            else:
+                model.clearCurrentIndex()
+        finally:
+            self._updating = False
+
+    def _on_selection_changed(self) -> None:
+        if self._updating:
+            return
+        items = self.selectedItems()
+        ids = [str(item.data(ROLE_LAYER_ID)) for item in items]
+        current = self.currentItem()
+        if current is not None and current in items:
+            current_id = str(current.data(ROLE_LAYER_ID))
+        else:
+            current_id = ids[-1] if ids else None
+        self.selection_changed.emit(ids, current_id)
+
     def _on_context_menu(self, position: QPoint) -> None:
         item = self.itemAt(position)
         if item is None:
             return
-        self.setCurrentItem(item)
+        if not item.isSelected():
+            self.setCurrentItem(item)
+        else:
+            self.selectionModel().setCurrentIndex(
+                self.indexFromItem(item), NO_UPDATE
+            )
+            ids = [str(entry.data(ROLE_LAYER_ID)) for entry in self.selectedItems()]
+            self.selection_changed.emit(ids, str(item.data(ROLE_LAYER_ID)))
         self.context_requested.emit(
             str(item.data(ROLE_LAYER_ID)),
             self.viewport().mapToGlobal(position),
         )
-
-    def _on_current_item_changed(self, current: QListWidgetItem | None, _previous) -> None:
-        if self._updating or current is None:
-            return
-        self.layer_selected.emit(str(current.data(ROLE_LAYER_ID)))
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         layer_id = str(item.data(ROLE_LAYER_ID))
@@ -349,7 +409,7 @@ class LayersPanel(QWidget):
 
         self.layer_list = LayerListWidget(self)
         self.layer_list.eye_clicked.connect(self._on_eye_clicked)
-        self.layer_list.layer_selected.connect(self._on_layer_selected)
+        self.layer_list.selection_changed.connect(self._on_selection_changed)
         self.layer_list.rename_requested.connect(self._on_rename_requested)
         self.layer_list.adjustment_requested.connect(self.adjustment_edit_requested)
         self.layer_list.fill_requested.connect(self.fill_edit_requested)
@@ -364,7 +424,7 @@ class LayersPanel(QWidget):
     def _make_button(self, icon_name: str, tooltip: str) -> QToolButton:
         button = QToolButton(self)
         button.setObjectName("PanelIconButton")
-        button.setIcon(icons.icon(icon_name, 16))
+        button.setIcon(header_icon(icon_name))
         button.setIconSize(QSize(16, 16))
         button.setAutoRaise(True)
         button.setToolTip(tooltip)
@@ -381,6 +441,7 @@ class LayersPanel(QWidget):
         if document is not None:
             self._connect(document.structure_changed, self.refresh)
             self._connect(document.active_layer_changed, self.refresh_selection)
+            self._connect(document.layer_selection_changed, self.refresh_selection)
             self._connect(document.content_changed, self.refresh_thumbnails)
         self.refresh()
 
@@ -489,36 +550,37 @@ class LayersPanel(QWidget):
         previous = self._updating
         self._updating = True
         try:
-            active = document.active_layer if document else None
-            row = -1
-            for index in range(self.layer_list.count()):
-                item = self.layer_list.item(index)
-                if active is not None and item.data(ROLE_LAYER_ID) == active.id:
-                    row = index
-                    break
-            if row >= 0:
-                self.layer_list.setCurrentRow(row)
-            else:
-                self.layer_list.setCurrentRow(-1)
+            selected = document.selected_layers if document is not None else []
+            active = document.active_layer if document is not None else None
+            self.layer_list.set_selection(
+                [layer.id for layer in selected],
+                active.id if active is not None else None,
+            )
             if active is None:
                 self._set_controls_enabled(False)
                 return
             self._set_controls_enabled(True)
+            count = len(selected)
+            suffix = f" ({count} layer đang chọn)" if count > 1 else ""
             is_adjustment = active.kind == LayerKind.ADJUSTMENT
             self.blend_combo.setEnabled(not is_adjustment)
             self.blend_combo.setToolTip(
-                "Layer điều chỉnh không dùng blend mode; hãy đổi Opacity để "
-                "giảm độ mạnh hiệu ứng."
-                if is_adjustment
-                else "Blend mode của layer đang chọn"
+                (
+                    "Layer điều chỉnh không dùng blend mode; hãy đổi Opacity để "
+                    "giảm độ mạnh hiệu ứng."
+                    if is_adjustment
+                    else f"Blend mode của layer đang chọn{suffix}"
+                )
             )
             self.blend_combo.setCurrentIndex(
                 max(0, self.blend_combo.findData(active.blend_mode))
             )
             self.opacity_spin.setValue(int(round(active.opacity * 100)))
-            self._lock_button.setChecked(active.locked)
+            self.opacity_spin.setToolTip(f"Độ mờ của layer đang chọn{suffix}")
+            locked = all(layer.locked for layer in selected)
+            self._lock_button.setChecked(locked)
             self._lock_button.setIcon(
-                icons.icon("lock" if active.locked else "lock_open", 16)
+                header_icon("lock" if locked else "lock_open")
             )
         finally:
             self._updating = previous
@@ -545,16 +607,18 @@ class LayersPanel(QWidget):
     def refresh_theme(self) -> None:
         self._thumb_cache.clear()
         self._mask_cache.clear()
+        active = self.document.active_layer if self.document is not None else None
         for icon_name, button in (
             ("layer_new", self._new_button),
             ("folder", self._group_button),
             ("text", self._text_button),
+            ("shape", self._shape_button),
             ("layer_duplicate", self._duplicate_button),
-            ("lock", self._lock_button),
+            ("lock" if active is not None and active.locked else "lock_open", self._lock_button),
             ("layer_delete", self._delete_button),
             ("merge_down", self._merge_button),
         ):
-            button.setIcon(icons.icon(icon_name, 16))
+            button.setIcon(header_icon(icon_name))
         self.refresh()
 
     # --------------------------------------------------------------- thumbnail
@@ -702,12 +766,20 @@ class LayersPanel(QWidget):
         self._lock_button.setEnabled(enabled)
 
     # --------------------------------------------------------------- handlers
-    def _on_layer_selected(self, layer_id: str) -> None:
+    def _on_selection_changed(self, layer_ids: list, current_id) -> None:
         if self._updating or self.document is None:
             return
-        layer = self.document.layers.get(layer_id)
-        if layer is not None:
-            self.document.set_active_layer(layer)
+        layers = []
+        for layer_id in layer_ids:
+            layer = self.document.layers.get(str(layer_id))
+            if layer is not None:
+                layers.append(layer)
+        active = (
+            self.document.layers.get(str(current_id)) if current_id else None
+        )
+        if active is None and layers:
+            active = layers[-1]
+        self.document.set_selected_layers(layers, active=active)
 
     def _on_eye_clicked(self, layer_id: str) -> None:
         if self.document is None:
@@ -719,13 +791,23 @@ class LayersPanel(QWidget):
     def _on_lock_clicked(self, checked: bool) -> None:
         if self._updating or self.document is None:
             return
-        layer = self.document.active_layer
-        if layer is None:
+        layers = self.document.selected_layers
+        if not layers:
             return
-        self.document.set_layer_locked(layer, checked)
-        self.message.emit(
-            f"Đã khoá layer '{layer.name}'." if checked else f"Đã mở khoá layer '{layer.name}'."
-        )
+        count = self.document.set_layers_locked(checked)
+        if count == 0:
+            return
+        if count == 1:
+            layer = layers[0]
+            self.message.emit(
+                f"Đã khoá layer '{layer.name}'."
+                if checked
+                else f"Đã mở khoá layer '{layer.name}'."
+            )
+        else:
+            self.message.emit(
+                f"Đã khoá {count} layer." if checked else f"Đã mở khoá {count} layer."
+            )
 
     def _on_rename_requested(self, layer_id: str) -> None:
         if self.document is None:
@@ -756,19 +838,14 @@ class LayersPanel(QWidget):
     def _on_blend_changed(self, index: int) -> None:
         if self._updating or self.document is None:
             return
-        layer = self.document.active_layer
-        if layer is None:
-            return
         mode = self.blend_combo.itemData(index)
         if mode:
-            self.document.set_layer_blend_mode(layer, str(mode))
+            self.document.set_layers_blend_mode(str(mode))
 
     def _on_opacity_changed(self, value: int) -> None:
         if self._updating or self.document is None:
             return
-        layer = self.document.active_layer
-        if layer is not None:
-            self.document.set_layer_opacity(layer, value / 100.0)
+        self.document.set_layers_opacity(value / 100.0)
 
     def _on_new_layer(self) -> None:
         if self.document is None:
@@ -783,21 +860,42 @@ class LayersPanel(QWidget):
         self.message.emit(f"Đã thêm nhóm '{group.name}'.")
 
     def _on_duplicate_layer(self) -> None:
-        if self.document is None or self.document.active_layer is None:
+        if self.document is None or not self.document.selected_layers:
             self.message.emit("Chưa chọn layer để nhân bản.")
             return
-        self.document.duplicate_layer()
-        self.message.emit("Đã nhân bản layer.")
+        clones = self.document.duplicate_layers()
+        count = len(clones)
+        self.message.emit(
+            f"Đã nhân bản {count} layer." if count > 1 else "Đã nhân bản layer."
+        )
 
     def _on_delete_layer(self) -> None:
-        if self.document is None or self.document.active_layer is None:
+        if self.document is None or not self.document.selected_layers:
             self.message.emit("Chưa chọn layer để xoá.")
             return
-        self.document.remove_layer()
-        self.message.emit("Đã xoá layer (Ctrl+Z để hoàn tác).")
+        count = self.document.remove_layers()
+        if count == 0:
+            self.message.emit("Chưa chọn layer để xoá.")
+        else:
+            self.message.emit(
+                f"Đã xoá {count} layer (Ctrl+Z để hoàn tác)."
+                if count > 1
+                else "Đã xoá layer (Ctrl+Z để hoàn tác)."
+            )
 
     def _on_merge_down(self) -> None:
         if self.document is None:
+            return
+        selected = self.document.selected_layers
+        if len(selected) > 1:
+            if self.document.merge_layers():
+                self.message.emit(
+                    f"Đã gộp {len(selected)} layer (Ctrl+Z để hoàn tác)."
+                )
+            else:
+                self.message.emit(
+                    "Chỉ gộp được các layer cùng nhóm và không chứa nhóm con."
+                )
             return
         if self.document.merge_down():
             self.message.emit("Đã Merge Down.")

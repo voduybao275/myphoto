@@ -25,7 +25,7 @@ class DocumentTabs(QTabWidget):
         self._update_tooltip(view, index)
         close_button = QToolButton(self)
         close_button.setObjectName("tabCloseButton")
-        close_button.setIcon(icons.icon("close", 10))
+        close_button.setIcon(icons.icon("close"))
         close_button.setIconSize(QSize(10, 10))
         close_button.setAutoRaise(True)
         close_button.setToolTip("Đóng tài liệu (Ctrl+W)")
@@ -77,4 +77,4 @@ class DocumentTabs(QTabWidget):
         for index in range(self.count()):
             button = self.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
             if isinstance(button, QToolButton):
-                button.setIcon(icons.icon("close", 10))
+                button.setIcon(icons.icon("close"))

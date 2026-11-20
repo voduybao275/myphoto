@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = "My Photo Studio"
 APP_SLUG = "MyPhotoStudio"
-APP_VERSION = "0.30.0"
+APP_VERSION = "0.36.0"
 
 PROJECT_EXTENSION = ".mps"
 PROJECT_FILTER = "My Photo Studio Project (*.mps)"
@@ -23,9 +23,12 @@ IMAGE_OPEN_FILTER = (
     "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tif *.tiff);;"
     "GIF (*.gif);;WebP (*.webp)"
 )
+PSD_OPEN_FILTER = "Photoshop Document (*.psd)"
 OPEN_FILTER = (
-    "Tất cả file hỗ trợ (*.mps *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.gif *.webp);;"
+    "Tất cả file hỗ trợ (*.mps *.psd *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.gif *.webp);;"
     "My Photo Studio Project (*.mps);;"
+    + PSD_OPEN_FILTER
+    + ";;"
     + IMAGE_OPEN_FILTER
 )
 EXPORT_FILTER = (

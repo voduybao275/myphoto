@@ -17,6 +17,7 @@ from PySide6.QtGui import QImage
 from core.adjustment_layer import apply_adjustment_rgb
 from core.fill_layer import render_fill_band
 from core.layer import Layer, LayerKind
+from core.layer_style import effect_margin, render_effect_passes
 
 # Mục tiêu dung lượng bộ nhớ tạm cho mỗi dải ~ 16 MB (float32 x 4 kênh).
 _BAND_PIXEL_BUDGET = 1_000_000
@@ -287,6 +288,238 @@ def _base_alpha_band(
     return band
 
 
+def _crop_to_band(
+    array: np.ndarray,
+    rect: tuple[int, int, int, int],
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+) -> np.ndarray | None:
+    rx0, ry0, rx1, ry1 = rect
+    cx0 = max(x0, rx0)
+    cy0 = max(y0, ry0)
+    cx1 = min(x1, rx1)
+    cy1 = min(y1, ry1)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return None
+    return array[cy0 - ry0 : cy1 - ry0, cx0 - rx0 : cx1 - rx0]
+
+
+def _silhouette_rect(
+    layer: Layer,
+    style,
+    rect: tuple[int, int, int, int],
+    canvas_width: int,
+    canvas_height: int,
+) -> np.ndarray:
+    """Alpha của layer (chưa nhân opacity) trong vùng ``rect`` để dựng hiệu ứng."""
+    x0, y0, x1, y1 = rect
+    alpha = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
+    if layer.kind == LayerKind.FILL:
+        if layer.fill_props is None:
+            return alpha
+        source = render_fill_band(
+            layer.fill_props, y0, y1, canvas_width, canvas_height, x0=x0, x1=x1
+        )
+        alpha[...] = source[..., 3]
+        mask = layer.mask
+        if (
+            style.layer_mask_hides_effects
+            and mask is not None
+            and layer.mask_enabled
+            and mask.shape == (canvas_height, canvas_width)
+        ):
+            alpha *= mask[y0:y1, x0:x1].astype(np.float32) * (1.0 / 255.0)
+        return alpha
+
+    ix0 = max(x0, max(0, layer.offset_x))
+    ix1 = min(x1, min(canvas_width, layer.offset_x + layer.width))
+    iy0 = max(y0, max(0, layer.offset_y))
+    iy1 = min(y1, min(canvas_height, layer.offset_y + layer.height))
+    if ix1 <= ix0 or iy1 <= iy0:
+        return alpha
+    local_x0 = ix0 - layer.offset_x
+    local_x1 = ix1 - layer.offset_x
+    local_y0 = iy0 - layer.offset_y
+    local_y1 = iy1 - layer.offset_y
+    content = layer.pixels[local_y0:local_y1, local_x0:local_x1, 3].astype(
+        np.float32
+    ) * (1.0 / 255.0)
+    mask = layer.mask
+    if (
+        style.layer_mask_hides_effects
+        and mask is not None
+        and layer.mask_enabled
+        and mask.shape == (layer.height, layer.width)
+    ):
+        content = content * (
+            mask[local_y0:local_y1, local_x0:local_x1].astype(np.float32)
+            * (1.0 / 255.0)
+        )
+    alpha[iy0 - y0 : iy1 - y0, ix0 - x0 : ix1 - x0] = content
+    return alpha
+
+
+def _blend_styled_rect(
+    accumulator: np.ndarray,
+    layer: Layer,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    canvas_width: int,
+    canvas_height: int,
+    clip_alpha: np.ndarray | None,
+    blend_override: str | None,
+) -> None:
+    """Vẽ layer có Layer Style: hiệu ứng dưới/trên nội dung, fill opacity, Blend If."""
+    style = layer.style
+    if style is None:
+        return
+    margin = effect_margin(style)
+    rect = (
+        max(0, x0 - margin),
+        max(0, y0 - margin),
+        min(canvas_width, x1 + margin),
+        min(canvas_height, y1 + margin),
+    )
+    if rect[2] <= rect[0] or rect[3] <= rect[1]:
+        return
+    if layer.kind == LayerKind.FILL:
+        bounds = (0, 0, canvas_width, canvas_height)
+    else:
+        bounds = (
+            max(0, layer.offset_x),
+            max(0, layer.offset_y),
+            min(canvas_width, layer.offset_x + layer.width),
+            min(canvas_height, layer.offset_y + layer.height),
+        )
+    silhouette = _silhouette_rect(layer, style, rect, canvas_width, canvas_height)
+    passes = render_effect_passes(style, silhouette, rect, bounds)
+
+    band_height = y1 - y0
+    band_width = x1 - x0
+    dest = accumulator[0:band_height, 0:band_width]
+    src_rgb: np.ndarray | None = None
+    src_alpha: np.ndarray | None = None
+
+    if layer.kind == LayerKind.FILL:
+        if layer.fill_props is not None:
+            source = render_fill_band(
+                layer.fill_props,
+                y0,
+                y1,
+                canvas_width,
+                canvas_height,
+                x0=x0,
+                x1=x1,
+            )
+            src_rgb = source[..., :3]
+            src_alpha = source[..., 3] * float(layer.opacity) * style.fill_opacity
+            mask = layer.mask
+            if (
+                mask is not None
+                and layer.mask_enabled
+                and mask.shape == (canvas_height, canvas_width)
+            ):
+                src_alpha = src_alpha * (
+                    mask[y0:y1, x0:x1].astype(np.float32) * (1.0 / 255.0)
+                )
+    else:
+        ix0 = max(x0, max(0, layer.offset_x))
+        ix1 = min(x1, min(canvas_width, layer.offset_x + layer.width))
+        iy0 = max(y0, max(0, layer.offset_y))
+        iy1 = min(y1, min(canvas_height, layer.offset_y + layer.height))
+        if ix1 > ix0 and iy1 > iy0:
+            local_x0 = ix0 - layer.offset_x
+            local_x1 = ix1 - layer.offset_x
+            local_y0 = iy0 - layer.offset_y
+            local_y1 = iy1 - layer.offset_y
+            src = layer.pixels[local_y0:local_y1, local_x0:local_x1].astype(
+                np.float32
+            )
+            src *= 1.0 / 255.0
+            src_rgb = np.zeros((band_height, band_width, 3), dtype=np.float32)
+            src_rgb[iy0 - y0 : iy1 - y0, ix0 - x0 : ix1 - x0] = src[..., :3]
+            src_alpha = np.zeros((band_height, band_width), dtype=np.float32)
+            local_alpha = src[..., 3] * float(layer.opacity) * style.fill_opacity
+            mask = layer.mask
+            if mask is not None and layer.mask_enabled:
+                local_alpha = local_alpha * (
+                    mask[local_y0:local_y1, local_x0:local_x1].astype(np.float32)
+                    * (1.0 / 255.0)
+                )
+            src_alpha[iy0 - y0 : iy1 - y0, ix0 - x0 : ix1 - x0] = local_alpha
+
+    if clip_alpha is not None:
+        if src_alpha is not None:
+            src_alpha = src_alpha * clip_alpha
+    weights = None
+    if not style.blend_if.is_identity:
+        reference = src_rgb
+        if reference is None:
+            reference = np.zeros((band_height, band_width, 3), dtype=np.float32)
+        weights = style.blend_if.weights(reference, dest[..., :3])
+
+    if style.knockout != "none":
+        # Knockout dựa trên *hình dạng* layer, không phụ thuộc Fill Opacity —
+        # nhờ vậy Fill 0% + Knockout cho phép "đục" layer nền như Photoshop.
+        shape = _silhouette_rect(
+            layer, style, (x0, y0, x1, y1), canvas_width, canvas_height
+        )
+        if clip_alpha is not None:
+            shape = shape * clip_alpha
+        dest[..., 3] = dest[..., 3] * (1.0 - np.clip(shape, 0.0, 1.0))
+
+    for effect_pass in passes:
+        if not effect_pass.below:
+            continue
+        sub = _crop_to_band(effect_pass.rgba, rect, x0, y0, x1, y1)
+        if sub is None:
+            continue
+        alpha = sub[..., 3]
+        if clip_alpha is not None:
+            alpha = alpha * clip_alpha
+        if weights is not None:
+            alpha = alpha * weights
+        _composite_source_band(dest, sub[..., :3], alpha, effect_pass.blend_mode)
+
+    if src_alpha is not None and src_rgb is not None and float(np.max(src_alpha)) > 0.0:
+        alpha = src_alpha if weights is None else src_alpha * weights
+        mode = blend_override or layer.blend_mode
+        _composite_source_band(dest, src_rgb, alpha, mode)
+
+    above = [effect_pass for effect_pass in passes if not effect_pass.below]
+    if above and style.blend_interior_as_group:
+        group = np.zeros((band_height, band_width, 4), dtype=np.float32)
+        for effect_pass in above:
+            sub = _crop_to_band(effect_pass.rgba, rect, x0, y0, x1, y1)
+            if sub is None:
+                continue
+            alpha = sub[..., 3]
+            if clip_alpha is not None:
+                alpha = alpha * clip_alpha
+            if weights is not None:
+                alpha = alpha * weights
+            _composite_source_band(group, sub[..., :3], alpha, effect_pass.blend_mode)
+        if np.any(group[..., 3] > 0.0):
+            _composite_source_band(
+                dest, group[..., :3], group[..., 3], layer.blend_mode
+            )
+    else:
+        for effect_pass in above:
+            sub = _crop_to_band(effect_pass.rgba, rect, x0, y0, x1, y1)
+            if sub is None:
+                continue
+            alpha = sub[..., 3]
+            if clip_alpha is not None:
+                alpha = alpha * clip_alpha
+            if weights is not None:
+                alpha = alpha * weights
+            _composite_source_band(dest, sub[..., :3], alpha, effect_pass.blend_mode)
+
+
 def _blend_rect(
     accumulator: np.ndarray,
     layer: Layer,
@@ -297,12 +530,28 @@ def _blend_rect(
     canvas_width: int,
     canvas_height: int,
     clip_alpha: np.ndarray | None = None,
+    blend_override: str | None = None,
 ) -> None:
     if not layer.visible or layer.opacity <= 0.0:
         return
 
     if layer.kind == LayerKind.ADJUSTMENT:
         _apply_adjustment_rect(accumulator, layer, x0, y0, x1, y1, canvas_width)
+        return
+
+    if layer.style is not None and not layer.style.is_identity:
+        _blend_styled_rect(
+            accumulator,
+            layer,
+            x0,
+            y0,
+            x1,
+            y1,
+            canvas_width,
+            canvas_height,
+            clip_alpha,
+            blend_override,
+        )
         return
 
     if layer.kind == LayerKind.FILL:
@@ -427,6 +676,7 @@ def _composite_children_rect(
 ) -> None:
     base_layer: Layer | None = None
     base_alpha: np.ndarray | None = None
+    chain_mode: str | None = None
     for layer in children:
         clip_alpha: np.ndarray | None = None
         if layer.clipping and base_layer is not None:
@@ -443,6 +693,9 @@ def _composite_children_rect(
                     stack,
                 )
             clip_alpha = base_alpha
+            base_style = base_layer.style
+            if base_style is not None and base_style.blend_clipped_as_group:
+                chain_mode = base_layer.blend_mode
         if layer.kind == LayerKind.GROUP:
             _blend_group_rect(
                 accumulator,
@@ -468,10 +721,12 @@ def _composite_children_rect(
                 canvas_width,
                 canvas_height,
                 clip_alpha,
+                chain_mode,
             )
         if not layer.clipping or base_layer is None:
             base_layer = layer
             base_alpha = None
+            chain_mode = None
 
 
 def composite_region(
@@ -517,6 +772,7 @@ def composite_region(
         and visible[0].opacity >= 0.999
         and visible[0].pixels is not None
         and not visible[0].clipping
+        and visible[0].style is None
         and not (visible[0].mask is not None and visible[0].mask_enabled)
     ):
         only = visible[0]

@@ -419,6 +419,15 @@ def _absolute_spacing() -> object:
     return QFont.AbsoluteSpacing  # pragma: no cover - Qt 5.14 trở xuống
 
 
+def font_line_height(font_family: str, pixel_size: int) -> float:
+    """Chiều cao một dòng của font ở cỡ pixel (dùng khi quy đổi leading PSD)."""
+    font = QFont()
+    if font_family:
+        font.setFamily(font_family)
+    font.setPixelSize(max(1, int(pixel_size)))
+    return max(1.0, float(QFontMetricsF(font).lineSpacing()))
+
+
 def _make_font(run: TextRun, letter_spacing: int = 0) -> QFont:
     font = QFont()
     if run.font_family:
