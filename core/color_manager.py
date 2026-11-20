@@ -6,13 +6,17 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QColor
 
 
+DEFAULT_FOREGROUND = "#ffffff"
+DEFAULT_BACKGROUND = "#000000"
+
+
 class ColorManager(QObject):
     colors_changed = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._foreground = QColor("#ffffff")
-        self._background = QColor("#000000")
+        self._foreground = QColor(DEFAULT_FOREGROUND)
+        self._background = QColor(DEFAULT_BACKGROUND)
 
     @property
     def foreground(self) -> QColor:
@@ -36,6 +40,15 @@ class ColorManager(QObject):
 
     def swap(self) -> None:
         self._foreground, self._background = self._background, self._foreground
+        self.colors_changed.emit()
+
+    def reset_defaults(self) -> None:
+        foreground = QColor(DEFAULT_FOREGROUND)
+        background = QColor(DEFAULT_BACKGROUND)
+        if foreground == self._foreground and background == self._background:
+            return
+        self._foreground = foreground
+        self._background = background
         self.colors_changed.emit()
 
     @staticmethod

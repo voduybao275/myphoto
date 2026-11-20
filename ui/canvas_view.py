@@ -34,6 +34,7 @@ from compat.qt import mouse_event_position, wheel_event_position
 from ui.inline_text import InlineTextEditor
 from tools.base import CanvasTool
 from tools.brush import BrushTool, EraserTool
+from tools.eyedropper import EyedropperTool
 from tools.gradient import GradientTool
 from tools.move import MoveTool
 from tools.navigation import HandTool, ZoomTool
@@ -72,6 +73,9 @@ class CanvasView(QWidget):
     text_placement_requested = Signal(QPointF)
     inline_text_finished = Signal(str, object, QPointF)
     quick_mask_changed = Signal(bool)
+    color_picked = Signal(object, bool)
+    color_shortcut = Signal(str)
+    paint_options_changed = Signal()
 
     def __init__(self, document: Document, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -112,6 +116,7 @@ class CanvasView(QWidget):
             "brush": BrushTool(),
             "eraser": EraserTool(),
             "gradient": GradientTool(),
+            "eyedropper": EyedropperTool(),
             "hand": HandTool(),
             "zoom": ZoomTool(),
         }
@@ -204,6 +209,28 @@ class CanvasView(QWidget):
     def set_eraser_options(self, **options: object) -> None:
         self._tools["eraser"].configure(**options)
         self._apply_cursor()
+
+    def step_brush_size(self, direction: int) -> None:
+        """Tăng/giảm cỡ cọ theo bậc giống Photoshop ([ và ])."""
+        tool_id = "eraser" if self._tool_id == "eraser" else "brush"
+        size = int(self._tools[tool_id].options()["size"])
+        if size < 10:
+            step = 1
+        elif size < 100:
+            step = 10
+        elif size < 200:
+            step = 25
+        elif size < 300:
+            step = 50
+        else:
+            step = 100
+        if direction < 0 and size <= 10:
+            step = 1
+        new_size = size + step * (1 if direction > 0 else -1)
+        self._tools[tool_id].configure(size=new_size)
+        self._apply_cursor()
+        self.paint_options_changed.emit()
+        self.status_message.emit(f"Cỡ cọ: {self._tools[tool_id].options()['size']} px")
 
     def set_brush_color(self, color: tuple[int, int, int, int]) -> None:
         """Đồng bộ màu Foreground cho cả cọ và tẩy."""
@@ -343,7 +370,10 @@ class CanvasView(QWidget):
             self.clear_crop_rect()
         if self._tool_id == "shape" and tool_id != "shape":
             self._tools["shape"].reset(self)
-        if self._tool_id in ("brush", "eraser", "gradient") and tool_id != self._tool_id:
+        if (
+            self._tool_id in ("brush", "eraser", "gradient", "eyedropper")
+            and tool_id != self._tool_id
+        ):
             self._tools[self._tool_id].reset(self)
         if self._tool_id in ("quick_select", "lasso") and tool_id != self._tool_id:
             self._tools[self._tool_id].reset(self)
@@ -1053,6 +1083,19 @@ class CanvasView(QWidget):
             event.accept()
             return
         if event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            if event.key() == Qt.Key.Key_X:
+                self.color_shortcut.emit("swap")
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_D:
+                self.color_shortcut.emit("reset")
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+                if self._tool_id in ("brush", "eraser"):
+                    self.step_brush_size(1 if event.key() == Qt.Key.Key_BracketRight else -1)
+                    event.accept()
+                    return
             shortcut_map = {
                 Qt.Key.Key_V: "move",
                 Qt.Key.Key_M: "rect_select",
@@ -1064,6 +1107,7 @@ class CanvasView(QWidget):
                 Qt.Key.Key_U: "shape",
                 Qt.Key.Key_B: "brush",
                 Qt.Key.Key_G: "gradient",
+                Qt.Key.Key_I: "eyedropper",
                 Qt.Key.Key_H: "hand",
                 Qt.Key.Key_Z: "zoom",
             }

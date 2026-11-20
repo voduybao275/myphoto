@@ -61,19 +61,25 @@ TOOL_DEFINITIONS: list[tuple[str, str, str, str]] = [
         "brush",
         "Brush",
         "B",
-        "Kéo để vẽ bằng màu Foreground. Có thể chọn vẽ lên layer mask. Esc để huỷ nét.",
+        "Kéo để vẽ bằng màu Foreground. [ / ] đổi cỡ cọ. Có thể vẽ lên layer mask. Esc để huỷ nét.",
     ),
     (
         "eraser",
         "Eraser",
         "Shift+E",
-        "Kéo để tẩy pixel (giảm độ đục). Esc để huỷ nét.",
+        "Kéo để tẩy pixel (giảm độ đục). [ / ] đổi cỡ cọ. Esc để huỷ nét.",
     ),
     (
         "gradient",
         "Gradient",
         "G",
         "Kéo để tô dải màu tuyến tính/hình tròn. Có thể tô lên layer mask.",
+    ),
+    (
+        "eyedropper",
+        "Eyedropper",
+        "I",
+        "Nhấp để lấy màu Foreground từ ảnh ghép. Alt+Click để lấy màu Background.",
     ),
     ("hand", "Hand", "H", "Di chuyển khung nhìn. Giữ Space tại bất kỳ công cụ nào."),
     ("zoom", "Zoom", "Z", "Phóng to / thu nhỏ. Alt+Click để thu nhỏ."),
@@ -91,7 +97,8 @@ class ColorSwatches(QWidget):
         self.setFixedSize(62, 66)
         self.setToolTip(
             "Foreground / Background\n"
-            "Nhấp ô trước để chọn màu, nhấp ô sau để chọn màu nền, nhấp mũi tên để hoán đổi."
+            "Nhấp ô trước để chọn màu, nhấp ô sau để chọn màu nền, nhấp mũi tên để hoán đổi.\n"
+            "X: hoán đổi màu · D: về màu mặc định · I: Eyedropper."
         )
         self._fg_rect = QRectF(6, 8, 30, 30)
         self._bg_rect = QRectF(24, 28, 30, 30)

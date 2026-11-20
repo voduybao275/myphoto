@@ -642,6 +642,20 @@ class Document(QObject):
         self._apply_command(command)
         return True
 
+    def set_layer_locked(self, layer: Layer, locked: bool) -> bool:
+        locked = bool(locked)
+        if layer.locked == locked:
+            return False
+        command = SetLayerPropertyCommand(
+            layer,
+            "locked",
+            layer.locked,
+            locked,
+            label="Khoá layer" if locked else "Mở khoá layer",
+        )
+        self._apply_command(command)
+        return True
+
     def set_layer_opacity(self, layer: Layer, opacity: float) -> bool:
         opacity = float(max(0.0, min(1.0, opacity)))
         if abs(layer.opacity - opacity) < 1e-6:
@@ -1421,6 +1435,8 @@ class Document(QObject):
         target = layer or self.active_layer
         if target is None:
             return False
+        if target.locked:
+            raise ValueError(f"Layer '{target.name}' đang bị khoá.")
         if target.uses_canvas_mask:
             raise ValueError(
                 "Layer điều chỉnh/nhóm/layer tô không hỗ trợ xoay/lật trực tiếp.\n"
@@ -1503,6 +1519,8 @@ class Document(QObject):
         target = layer or self.active_layer
         if target is None:
             return False
+        if target.locked:
+            raise ValueError(f"Layer '{target.name}' đang bị khoá.")
         if target.uses_canvas_mask:
             raise ValueError(
                 "Layer điều chỉnh/nhóm/layer tô không hỗ trợ xoay/lật trực tiếp.\n"
@@ -2106,6 +2124,119 @@ class Document(QObject):
         command = LayerTransformCommand(old_state, new_state, label)
         self._apply_command(command, record=record)
         return True
+
+    def _pixel_edit_target(self, layer: Layer | None) -> Layer:
+        target = layer or self.active_layer
+        if target is None:
+            raise ValueError("Chưa chọn layer nào.")
+        if target.kind != LayerKind.PIXEL:
+            raise ValueError(
+                f"Layer '{target.name}' không phải layer ảnh.\n"
+                "Hãy rasterize layer trước khi xoá hoặc tô trực tiếp."
+            )
+        if target.locked:
+            raise ValueError(f"Layer '{target.name}' đang bị khoá.")
+        return target
+
+    def clear_selection_pixels(
+        self, layer: Layer | None = None, *, record: bool = True
+    ) -> bool:
+        """Xoá (làm trong suốt) pixel trong vùng chọn; không có vùng chọn thì xoá cả layer."""
+        target = self._pixel_edit_target(layer)
+        cleared = target.pixels.copy()
+        cleared[..., 3] = 0
+        return self.apply_layer_filter(cleared, "Xoá vùng chọn", target, record=record)
+
+    def fill_selection(
+        self,
+        color: tuple[int, int, int, int],
+        layer: Layer | None = None,
+        *,
+        record: bool = True,
+    ) -> bool:
+        """Tô màu (phủ lên trên) vào vùng chọn của layer ảnh; không có vùng chọn thì tô cả layer."""
+        target = self._pixel_edit_target(layer)
+        if len(tuple(color)) != 4:
+            raise ValueError("Màu tô phải gồm 4 kênh RGBA.")
+        red, green, blue, alpha = (int(max(0, min(255, c))) for c in color)
+        src_alpha = alpha / 255.0
+        pixels = target.pixels.astype(np.float32)
+        dst_alpha = pixels[..., 3:4] / 255.0
+        out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha)
+        src_rgb = np.array([red, green, blue], dtype=np.float32)
+        weighted = src_rgb * src_alpha + pixels[..., :3] * dst_alpha * (1.0 - src_alpha)
+        safe_alpha = np.where(out_alpha > 0, out_alpha, 1.0)
+        result = np.empty_like(target.pixels)
+        result[..., :3] = np.clip(np.rint(weighted / safe_alpha), 0, 255).astype(np.uint8)
+        result[..., 3] = np.clip(np.rint(out_alpha[..., 0] * 255.0), 0, 255).astype(np.uint8)
+        return self.apply_layer_filter(result, "Tô vùng chọn", target, record=record)
+
+    def copy_pixels(
+        self, layer: Layer | None = None, *, merged: bool = False
+    ) -> tuple[np.ndarray, tuple[int, int]] | None:
+        """Trích pixel RGBA trong vùng chọn (hoặc toàn bộ) kèm toạ độ góc trái trên.
+
+        merged=True lấy từ ảnh ghép của toàn tài liệu; ngược lại lấy từ layer.
+        Trả về None khi không có gì để sao chép.
+        """
+        if merged:
+            source = self.get_composite().array
+            source_x, source_y = 0, 0
+        else:
+            target = layer or self.active_layer
+            if target is None:
+                return None
+            if target.uses_canvas_mask:
+                raise ValueError(
+                    f"Layer '{target.name}' không có pixel riêng.\n"
+                    "Hãy dùng Copy Merged để sao chép ảnh ghép."
+                )
+            source = target.pixels
+            source_x, source_y = target.offset_x, target.offset_y
+        source_h, source_w = source.shape[:2]
+
+        if self.has_selection():
+            bounds = self._selection.bounds()
+            if bounds.isEmpty():
+                return None
+            x0 = max(bounds.left(), source_x)
+            y0 = max(bounds.top(), source_y)
+            x1 = min(bounds.left() + bounds.width(), source_x + source_w)
+            y1 = min(bounds.top() + bounds.height(), source_y + source_h)
+            if x1 <= x0 or y1 <= y0:
+                return None
+            crop = source[y0 - source_y : y1 - source_y, x0 - source_x : x1 - source_x].copy()
+            mask = self._selection.mask()[y0:y1, x0:x1]
+            crop[..., 3] = ((crop[..., 3].astype(np.uint16) * mask + 127) // 255).astype(np.uint8)
+            if not np.any(crop[..., 3]):
+                return None
+            return np.ascontiguousarray(crop), (x0, y0)
+        return np.ascontiguousarray(source.copy()), (source_x, source_y)
+
+    def paste_pixels(
+        self,
+        rgba: np.ndarray,
+        offset: tuple[int, int] | None = None,
+        *,
+        name: str | None = None,
+        record: bool = True,
+    ) -> Layer:
+        """Dán mảng RGBA thành layer mới; không có offset thì đặt giữa canvas."""
+        array = np.asarray(rgba)
+        if array.ndim != 3 or array.shape[2] != 4 or array.dtype != np.uint8:
+            raise ValueError("Dữ liệu dán phải là mảng RGBA uint8.")
+        height, width = array.shape[:2]
+        if width < 1 or height < 1:
+            raise ValueError("Dữ liệu dán rỗng.")
+        if width > self.MAX_DIMENSION or height > self.MAX_DIMENSION:
+            raise ValueError("Ảnh dán vượt quá kích thước cho phép.")
+        if offset is None:
+            offset = ((self.width - width) // 2, (self.height - height) // 2)
+        layer = Layer(width, height, name or self._next_layer_name())
+        layer.set_pixels(np.ascontiguousarray(array))
+        layer.offset_x = int(offset[0])
+        layer.offset_y = int(offset[1])
+        return self.add_layer(layer=layer, record=record)
 
     # -------------------------------------------------------------- undo / redo
     def undo(self) -> bool:

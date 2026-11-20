@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QRectF
 
 from core.document import Document
+from core.selection import Selection
 
 
 def make_document(width=8, height=8):
@@ -188,6 +190,59 @@ def test_get_composite_reflects_visibility_and_opacity():
     assert document.get_composite().array[0, 0, 3] == 0
 
 
+def test_set_layer_locked_is_undoable_and_blocks_filters():
+    document = make_document(2, 2)
+    layer = solid_layer(document, (255, 0, 0, 255))
+    assert document.set_layer_locked(layer, True)
+    assert layer.locked
+    assert not document.set_layer_locked(layer, True)
+    with pytest.raises(ValueError, match="khoá"):
+        document.apply_layer_filter(np.zeros_like(layer.pixels), "Thử", layer)
+    document.undo()
+    assert not layer.locked
+    document.redo()
+    assert layer.locked
+
+
+def test_clear_selection_pixels_respects_selection_and_undo():
+    document = make_document(8, 8)
+    layer = solid_layer(document, (10, 20, 30, 255))
+    document.set_selection(Selection.from_rect(8, 8, QRectF(2, 2, 3, 3)))
+    assert document.clear_selection_pixels()
+    assert np.all(layer.pixels[2:5, 2:5, 3] == 0)
+    assert layer.pixels[0, 0, 3] == 255
+    assert not document.clear_selection_pixels()
+    document.undo()
+    assert np.all(layer.pixels[..., 3] == 255)
+
+
+def test_clear_without_selection_clears_whole_layer():
+    document = make_document(4, 4)
+    layer = solid_layer(document, (10, 20, 30, 255))
+    assert document.clear_selection_pixels()
+    assert np.all(layer.pixels[..., 3] == 0)
+
+
+def test_fill_selection_composites_over_and_rejects_non_pixel_layers():
+    document = make_document(6, 6)
+    layer = solid_layer(document, (0, 0, 0, 0))
+    document.set_selection(Selection.from_rect(6, 6, QRectF(0, 0, 3, 6)))
+    assert document.fill_selection((255, 0, 0, 255))
+    assert tuple(layer.pixels[0, 0]) == (255, 0, 0, 255)
+    assert tuple(layer.pixels[0, 5]) == (0, 0, 0, 0)
+    document.deselect()
+    assert document.fill_selection((0, 0, 255, 128))
+    red, green, blue, alpha = layer.pixels[0, 0]
+    assert alpha == 255 and blue > 120 and red < 140
+    assert layer.pixels[0, 5, 3] == 128
+    document.set_layer_locked(layer, True)
+    with pytest.raises(ValueError, match="khoá"):
+        document.fill_selection((1, 2, 3, 255))
+    group = document.add_group()
+    with pytest.raises(ValueError, match="không phải layer ảnh"):
+        document.clear_selection_pixels(group)
+
+
 def test_mark_saved_keeps_history():
     document = make_document()
     solid_layer(document, (1, 2, 3, 255))
@@ -215,3 +270,48 @@ def test_set_active_layer_validation():
     solid_layer(document)
     document.set_active_layer(None)
     assert document.active_layer is None
+
+
+def test_copy_pixels_crops_to_selection_and_masks_alpha():
+    document = make_document(10, 10)
+    layer = solid_layer(document, (10, 20, 30, 255))
+    assert document.copy_pixels() is not None
+    array, offset = document.copy_pixels()
+    assert array.shape == (10, 10, 4) and offset == (0, 0)
+    document.set_selection(
+        Selection.from_rect(10, 10, QRectF(2, 3, 4, 5)), "Chọn vùng"
+    )
+    array, offset = document.copy_pixels()
+    assert offset == (2, 3)
+    assert array.shape == (5, 4, 4)
+    assert tuple(array[0, 0]) == (10, 20, 30, 255)
+    layer.offset_x = 8
+    document.deselect()
+    document.set_selection(
+        Selection.from_rect(10, 10, QRectF(0, 0, 4, 4)), "Chọn vùng"
+    )
+    assert document.copy_pixels() is None
+    group = document.add_group()
+    with pytest.raises(ValueError, match="Copy Merged"):
+        document.copy_pixels(group)
+    assert document.copy_pixels(group, merged=True) is None
+    document.deselect()
+    merged, merged_offset = document.copy_pixels(group, merged=True)
+    assert merged.shape == (10, 10, 4) and merged_offset == (0, 0)
+    assert tuple(merged[5, 9]) == (10, 20, 30, 255)
+    assert merged[5, 0, 3] == 0
+
+
+def test_paste_pixels_creates_layer_at_offset_or_centered():
+    document = make_document(20, 10)
+    solid_layer(document)
+    patch = np.full((4, 6, 4), 200, dtype=np.uint8)
+    layer = document.paste_pixels(patch, (3, 2))
+    assert document.active_layer is layer
+    assert (layer.width, layer.height) == (6, 4)
+    assert (layer.offset_x, layer.offset_y) == (3, 2)
+    assert document.history.can_undo
+    centered = document.paste_pixels(patch)
+    assert (centered.offset_x, centered.offset_y) == (7, 3)
+    with pytest.raises(ValueError):
+        document.paste_pixels(np.zeros((2, 2, 3), dtype=np.uint8))

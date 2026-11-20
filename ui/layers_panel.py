@@ -39,6 +39,7 @@ ROLE_MASK_THUMB = ROLE_LAYER_ID + 4
 ROLE_MASK_ENABLED = ROLE_LAYER_ID + 5
 ROLE_KIND = ROLE_LAYER_ID + 6
 ROLE_DEPTH = ROLE_LAYER_ID + 7
+ROLE_LOCKED = ROLE_LAYER_ID + 8
 
 ROW_HEIGHT = 48
 THUMB_SIZE = 36
@@ -120,6 +121,12 @@ class LayerItemDelegate(QStyledItemDelegate):
         name_color = QColor(theme.text if visible else theme.text_dim)
         painter.setPen(name_color)
         text_width = max(10, rect.right() - text_x - 6)
+        if bool(index.data(ROLE_LOCKED)):
+            lock_pixmap = icons.pixmap("lock", 14, QColor(theme.text_dim))
+            painter.drawPixmap(
+                QPoint(rect.right() - 20, rect.y() + (rect.height() - 14) // 2), lock_pixmap
+            )
+            text_width = max(10, text_width - 20)
         name = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         elided = QFontMetrics(name_font).elidedText(name, Qt.TextElideMode.ElideRight, text_width)
         subtitle = str(index.data(ROLE_SUBTITLE) or "")
@@ -251,7 +258,10 @@ class LayersPanel(QWidget):
         self._shape_button.clicked.connect(lambda: self.shape_requested.emit())
         self._duplicate_button = self._make_button("layer_duplicate", "Duplicate Layer (Ctrl+J)")
         self._duplicate_button.clicked.connect(self._on_duplicate_layer)
-        self._delete_button = self._make_button("layer_delete", "Delete Layer")
+        self._lock_button = self._make_button("lock_open", "Lock / Unlock Layer (Ctrl+/)")
+        self._lock_button.setCheckable(True)
+        self._lock_button.clicked.connect(self._on_lock_clicked)
+        self._delete_button = self._make_button("layer_delete", "Delete Layer (Ctrl+Shift+Delete)")
         self._delete_button.clicked.connect(self._on_delete_layer)
         self._merge_button = self._make_button("merge_down", "Merge Down (Ctrl+E)")
         self._merge_button.clicked.connect(self._on_merge_down)
@@ -261,6 +271,7 @@ class LayersPanel(QWidget):
             self._text_button,
             self._shape_button,
             self._duplicate_button,
+            self._lock_button,
             self._delete_button,
             self._merge_button,
         ):
@@ -368,6 +379,7 @@ class LayersPanel(QWidget):
         item.setData(ROLE_LAYER_ID, layer.id)
         item.setData(ROLE_KIND, layer.kind)
         item.setData(ROLE_VISIBLE, layer.visible)
+        item.setData(ROLE_LOCKED, layer.locked)
         item.setData(ROLE_DEPTH, depth)
         item.setData(ROLE_THUMB, self._thumbnail(layer))
         item.setData(ROLE_SUBTITLE, self._subtitle(layer))
@@ -445,6 +457,10 @@ class LayersPanel(QWidget):
                 max(0, self.blend_combo.findData(active.blend_mode))
             )
             self.opacity_spin.setValue(int(round(active.opacity * 100)))
+            self._lock_button.setChecked(active.locked)
+            self._lock_button.setIcon(
+                icons.icon("lock" if active.locked else "lock_open", 16)
+            )
         finally:
             self._updating = previous
 
@@ -458,6 +474,7 @@ class LayersPanel(QWidget):
             if layer is None:
                 continue
             item.setData(ROLE_VISIBLE, layer.visible)
+            item.setData(ROLE_LOCKED, layer.locked)
             item.setData(ROLE_THUMB, self._thumbnail(layer))
             item.setData(ROLE_SUBTITLE, self._subtitle(layer))
             item.setData(ROLE_MASK_THUMB, self._mask_thumbnail(layer))
@@ -472,6 +489,7 @@ class LayersPanel(QWidget):
             ("folder", self._group_button),
             ("text", self._text_button),
             ("layer_duplicate", self._duplicate_button),
+            ("lock", self._lock_button),
             ("layer_delete", self._delete_button),
             ("merge_down", self._merge_button),
         ):
@@ -611,11 +629,14 @@ class LayersPanel(QWidget):
             parts.append(f"{int(round(layer.opacity * 100))}%")
         if not layer.visible:
             parts.append("Ẩn")
+        if layer.locked:
+            parts.append("Khoá")
         return " · ".join(parts)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         self.blend_combo.setEnabled(enabled)
         self.opacity_spin.setEnabled(enabled)
+        self._lock_button.setEnabled(enabled)
 
     # --------------------------------------------------------------- handlers
     def _on_layer_selected(self, layer_id: str) -> None:
@@ -631,6 +652,17 @@ class LayersPanel(QWidget):
         layer = self.document.layers.get(layer_id)
         if layer is not None:
             self.document.set_layer_visible(layer, not layer.visible)
+
+    def _on_lock_clicked(self, checked: bool) -> None:
+        if self._updating or self.document is None:
+            return
+        layer = self.document.active_layer
+        if layer is None:
+            return
+        self.document.set_layer_locked(layer, checked)
+        self.message.emit(
+            f"Đã khoá layer '{layer.name}'." if checked else f"Đã mở khoá layer '{layer.name}'."
+        )
 
     def _on_rename_requested(self, layer_id: str) -> None:
         if self.document is None:

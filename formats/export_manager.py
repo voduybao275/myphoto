@@ -29,7 +29,12 @@ def _flatten_on_white(image: Image.Image) -> Image.Image:
     return background
 
 
-def export_image(path: str | Path, rgba: np.ndarray, quality: int = 92) -> Path:
+def export_image(
+    path: str | Path,
+    rgba: np.ndarray,
+    quality: int = 92,
+    dpi: float | None = None,
+) -> Path:
     """Ghi mảng RGBA ra file theo phần mở rộng. Ghi qua file tạm rồi thay thế."""
     target = Path(path)
     extension = target.suffix.lower()
@@ -40,12 +45,13 @@ def export_image(path: str | Path, rgba: np.ndarray, quality: int = 92) -> Path:
         )
     if rgba.ndim != 3 or rgba.shape[2] != 4:
         raise ExportError("Dữ liệu ảnh xuất không hợp lệ.")
+    quality = int(max(1, min(100, quality)))
 
     image = Image.fromarray(np.ascontiguousarray(rgba), "RGBA")
     save_options: dict[str, object] = {}
     if image_format == "JPEG":
         image = _flatten_on_white(image)
-        save_options = {"quality": int(quality), "optimize": True, "progressive": True}
+        save_options = {"quality": quality, "optimize": True, "progressive": True}
     elif image_format == "BMP":
         # BMP không phổ quát hỗ trợ alpha: làm phẳng trên nền trắng cho an toàn.
         image = _flatten_on_white(image)
@@ -54,7 +60,9 @@ def export_image(path: str | Path, rgba: np.ndarray, quality: int = 92) -> Path:
     elif image_format == "TIFF":
         save_options = {"compression": "tiff_lzw"}
     elif image_format == "WEBP":
-        save_options = {"quality": int(quality), "method": 4}
+        save_options = {"quality": quality, "method": 4}
+    if dpi is not None and dpi > 0 and image_format != "WEBP":
+        save_options["dpi"] = (float(dpi), float(dpi))
 
     temporary = target.with_name(target.name + ".tmp")
     try:

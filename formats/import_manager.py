@@ -33,7 +33,32 @@ class ImageImportError(Exception):
     """Lỗi khi đọc file ảnh với thông điệp thân thiện."""
 
 
+def _to_8bit_gray(image: Image.Image) -> Image.Image:
+    """Co ảnh xám sâu bit (I;16*, I, F) về L 8-bit theo dải thực tế.
+
+    Pillow convert("RGBA") trực tiếp từ các mode này chỉ cắt giá trị >255
+    nên ảnh gần như trắng xoá.
+    """
+    data = np.asarray(image, dtype=np.float64)
+    if image.mode == "F":
+        finite = data[np.isfinite(data)]
+        top = float(finite.max()) if finite.size else 1.0
+        scale = 255.0 if top <= 1.0 else 255.0 / max(top, 1e-12)
+        data = np.nan_to_num(data) * scale
+    elif image.mode == "I":
+        top = float(data.max()) if data.size else 0.0
+        if top > 65535:
+            data = data / (2**32 - 1) * 255.0
+        elif top > 255:
+            data = data / 65535.0 * 255.0
+    else:  # I;16, I;16B, I;16L, I;16N
+        data = data / 65535.0 * 255.0
+    return Image.fromarray(np.clip(np.rint(data), 0, 255).astype(np.uint8), "L")
+
+
 def _read_rgba(image: Image.Image) -> np.ndarray:
+    if image.mode in ("I", "F") or image.mode.startswith("I;16"):
+        image = _to_8bit_gray(image)
     if image.mode != "RGBA":
         image = image.convert("RGBA")
     return np.ascontiguousarray(np.asarray(image, dtype=np.uint8))

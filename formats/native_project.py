@@ -82,6 +82,7 @@ def save_project(document: Document, path: str | Path) -> Path:
                     "name": layer.name,
                     "kind": layer.kind,
                     "visible": layer.visible,
+                    "locked": bool(layer.locked),
                     "opacity": layer.opacity,
                     "blend_mode": layer.blend_mode,
                     "offset_x": layer.offset_x,
@@ -385,6 +386,7 @@ def load_project(path: str | Path) -> Document:
                     )
                 layer.group_id = group_id or None
                 layer.visible = bool(entry.get("visible", True))
+                layer.locked = bool(entry.get("locked", False))
                 try:
                     layer.opacity = max(0.0, min(1.0, float(entry.get("opacity", 1.0))))
                 except (TypeError, ValueError):

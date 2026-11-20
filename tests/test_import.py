@@ -33,6 +33,25 @@ def test_load_jpeg_converts_to_rgba(tmp_path):
     assert np.all(document.layers[0].pixels[..., 3] == 255)
 
 
+@pytest.mark.parametrize("suffix", [".png", ".tif"])
+def test_load_16bit_gray_scales_to_8bit(tmp_path, suffix):
+    row = np.linspace(0, 65535, 256, dtype=np.uint16)
+    Image.fromarray(np.tile(row, (3, 1))).save(tmp_path / f"g16{suffix}")
+    pixels = load_image_document(tmp_path / f"g16{suffix}").layers[0].pixels
+    gray = pixels[0, :, 0]
+    assert gray[0] == 0 and gray[-1] == 255
+    assert abs(int(gray[128]) - 128) <= 1
+    assert np.all(pixels[..., 3] == 255)
+
+
+def test_load_float_tiff_scales_to_8bit(tmp_path):
+    row = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+    Image.fromarray(np.tile(row, (3, 1))).save(tmp_path / "f32.tif")
+    gray = load_image_document(tmp_path / "f32.tif").layers[0].pixels[0, :, 0]
+    assert gray[0] == 0 and gray[-1] == 255
+    assert abs(int(gray[128]) - 128) <= 1
+
+
 def test_missing_file(tmp_path):
     with pytest.raises(ImageImportError, match="Không tìm thấy"):
         load_image_document(tmp_path / "khong-co.png")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import compat.qt  # noqa: F401  - phải import trước PySide6 để chọn đúng binding
@@ -24,7 +25,9 @@ def setup_logging() -> Path:
     log_dir = app_config_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "myphotostudio.log"
-    handler = logging.FileHandler(log_file, encoding="utf-8")
+    handler = RotatingFileHandler(
+        log_file, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
     handler.setFormatter(
         logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
     )

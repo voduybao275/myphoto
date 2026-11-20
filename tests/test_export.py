@@ -61,3 +61,21 @@ def test_export_invalid_array(tmp_path):
 def test_export_does_not_leave_temp_file(tmp_path):
     export_image(tmp_path / "out.png", sample_rgba())
     assert not (tmp_path / "out.png.tmp").exists()
+
+
+@pytest.mark.parametrize("extension", [".png", ".jpg", ".tif"])
+def test_export_writes_dpi(tmp_path, extension):
+    target = export_image(tmp_path / f"out{extension}", sample_rgba(), dpi=300)
+    with Image.open(target) as image:
+        dpi = image.info.get("dpi")
+    assert dpi is not None
+    assert round(dpi[0]) == 300
+
+
+def test_export_quality_affects_jpeg_size(tmp_path):
+    rng = np.random.default_rng(1)
+    noisy = rng.integers(0, 256, size=(64, 64, 4), dtype=np.uint8)
+    noisy[..., 3] = 255
+    low = export_image(tmp_path / "low.jpg", noisy, quality=20)
+    high = export_image(tmp_path / "high.jpg", noisy, quality=95)
+    assert low.stat().st_size < high.stat().st_size

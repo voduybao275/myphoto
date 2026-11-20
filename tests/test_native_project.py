@@ -40,6 +40,7 @@ def build_document():
 
     hidden = document.add_layer(name="Hidden", color=(0, 0, 255, 255), record=False)
     hidden.visible = False
+    hidden.locked = True
     document.set_active_layer(accent)
     document.mark_clean()
     return document
@@ -77,6 +78,8 @@ def test_roundtrip_preserves_layers_and_properties(tmp_path):
     assert np.array_equal(accent.mask, expected_mask)
     assert accent.mask_enabled
     assert not hidden.visible
+    assert hidden.locked
+    assert not accent.locked
     assert loaded.active_layer is not None
     assert loaded.active_layer.name == "Accent"
     assert np.array_equal(loaded.get_composite().array, document.get_composite().array)

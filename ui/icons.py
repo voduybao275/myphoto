@@ -306,6 +306,43 @@ def _draw_swap(painter: QPainter, color: QColor) -> None:
     painter.drawPolygon(QPolygonF([QPointF(5.4, 15.6), QPointF(10.2, 15.4), QPointF(6.8, 19.6)]))
 
 
+def _draw_lock(painter: QPainter, color: QColor, open_: bool = False) -> None:
+    painter.setPen(_pen(color, 1.6))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    if open_:
+        path.moveTo(8.4, 11.0)
+        path.lineTo(8.4, 7.6)
+        path.arcTo(QRectF(8.4, 3.6, 7.2, 8.0), 180.0, -180.0)
+        path.lineTo(15.6, 5.4)
+    else:
+        path.moveTo(8.4, 11.0)
+        path.lineTo(8.4, 7.6)
+        path.arcTo(QRectF(8.4, 3.6, 7.2, 8.0), 180.0, -180.0)
+        path.lineTo(15.6, 11.0)
+    painter.drawPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawRoundedRect(QRectF(5.6, 11.0, 12.8, 9.6), 2.0, 2.0)
+
+
+def _draw_eyedropper(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_pen(color, 1.8))
+    painter.drawLine(QPointF(5.2, 18.8), QPointF(13.6, 10.4))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    path = QPainterPath()
+    path.moveTo(12.4, 8.0)
+    path.lineTo(16.0, 11.6)
+    path.lineTo(19.6, 8.0)
+    path.arcTo(QRectF(14.4, 2.8, 5.2, 5.2), 0.0, 180.0)
+    path.closeSubpath()
+    painter.drawPath(path)
+    painter.setPen(_pen(color, 1.4))
+    painter.drawLine(QPointF(10.8, 9.6), QPointF(14.4, 13.2))
+    painter.drawLine(QPointF(4.4, 20.2), QPointF(3.6, 21.0))
+
+
 def _draw_app(painter: QPainter, color: QColor) -> None:
     gradient = QLinearGradient(0, 0, 24, 24)
     gradient.setColorAt(0.0, QColor("#343a44"))
@@ -359,6 +396,9 @@ _DRAWERS: dict[str, Callable[[QPainter, QColor], None]] = {
     "folder": _draw_folder,
     "close": _draw_close,
     "swap": _draw_swap,
+    "lock": lambda p, c: _draw_lock(p, c, open_=False),
+    "lock_open": lambda p, c: _draw_lock(p, c, open_=True),
+    "eyedropper": _draw_eyedropper,
     "app": _draw_app,
 }
 

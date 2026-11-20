@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
+
 import compat.qt  # noqa: F401  - chọn binding Qt trước mọi import PySide6
 from PySide6.QtCore import QByteArray, QPointF, Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -34,7 +36,7 @@ from config.settings import (
 from compat.qt import exec_object
 from core import filters
 from core.adjustment_layer import AdjustmentProperties
-from core.canvas import composite_layers, downsample_rgba
+from core.canvas import composite_layers, downsample_rgba, numpy_rgba_to_qimage, qimage_to_rgba
 from core.color_manager import ColorManager
 from core.document import Document
 from core.fill_layer import FillProperties
@@ -90,6 +92,7 @@ class MainWindow(QMainWindow):
             Path(settings_store.path).with_name("presets.sqlite3")
         )
         self.color_manager = ColorManager(self)
+        self._clipboard_payload: tuple[np.ndarray, tuple[int, int]] | None = None
         self._untitled_counter = 1
         self._document_connections: list[tuple[object, object]] = []
         self._current_view: CanvasView | None = None
@@ -197,6 +200,19 @@ class MainWindow(QMainWindow):
         self.action_redo.setShortcuts(
             [QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")]
         )
+        self.action_clear = self._action("Clear", "Delete", self._on_clear_selection)
+        self.action_cut = self._action("Cut", "Ctrl+X", self._on_cut)
+        self.action_copy = self._action("Copy", "Ctrl+C", self._on_copy)
+        self.action_copy_merged = self._action(
+            "Copy Merged", "Ctrl+Shift+C", self._on_copy_merged
+        )
+        self.action_paste = self._action("Paste", "Ctrl+V", self._on_paste)
+        self.action_fill_foreground = self._action(
+            "Fill with Foreground Color", "Alt+Backspace", self._on_fill_foreground
+        )
+        self.action_fill_background = self._action(
+            "Fill with Background Color", "Ctrl+Backspace", self._on_fill_background
+        )
 
         self.action_new_layer = self._action(
             "New Layer", "Ctrl+Shift+N", self._on_new_layer
@@ -212,7 +228,11 @@ class MainWindow(QMainWindow):
             "Duplicate Layer", "Ctrl+J", self._on_duplicate_layer
         )
         self.action_rename_layer = self._action("Rename Layer…", "F2", self._on_rename_layer)
-        self.action_delete_layer = self._action("Delete Layer", "", self._on_delete_layer)
+        self.action_lock_layer = self._action("Lock Layer", "Ctrl+/", self._on_toggle_lock_layer)
+        self.action_lock_layer.setCheckable(True)
+        self.action_delete_layer = self._action(
+            "Delete Layer", "Ctrl+Shift+Delete", self._on_delete_layer
+        )
         self.action_merge_down = self._action("Merge Down", "Ctrl+E", self._on_merge_down)
         self.action_flatten = self._action("Flatten Image", "Ctrl+Shift+E", self._on_flatten)
         self.action_add_mask = self._action("Add Layer Mask", "", self._on_add_layer_mask)
@@ -552,9 +572,9 @@ class MainWindow(QMainWindow):
         self.action_invert_selection.setEnabled(has_selection)
         self.action_feather_selection.setEnabled(has_selection)
         self.action_crop_selection.setEnabled(has_selection)
-        self.action_quick_mask.setEnabled(has_document)
         view = self.current_view
         quick_mask_enabled = bool(view is not None and view.quick_mask)
+        self.action_quick_mask.setEnabled(has_selection or quick_mask_enabled)
         if self.action_quick_mask.isChecked() != quick_mask_enabled:
             self.action_quick_mask.blockSignals(True)
             try:
@@ -581,8 +601,14 @@ class MainWindow(QMainWindow):
             self.action_duplicate_layer,
             self.action_rename_layer,
             self.action_delete_layer,
+            self.action_lock_layer,
         ):
             action.setEnabled(has_active)
+        is_locked = bool(active is not None and active.locked)
+        self.action_lock_layer.blockSignals(True)
+        self.action_lock_layer.setChecked(is_locked)
+        self.action_lock_layer.blockSignals(False)
+        self.action_lock_layer.setText("Unlock Layer" if is_locked else "Lock Layer")
         self.action_group_layers.setEnabled(has_active)
         self.action_ungroup_layers.setEnabled(is_group)
         self.action_add_mask.setEnabled(
@@ -601,6 +627,19 @@ class MainWindow(QMainWindow):
         can_filter = has_active and has_pixels and not bool(
             active and active.locked
         )
+        can_edit_pixels = bool(
+            active is not None and active.kind == LayerKind.PIXEL and not active.locked
+        )
+        for action in (
+            self.action_clear,
+            self.action_fill_foreground,
+            self.action_fill_background,
+        ):
+            action.setEnabled(can_edit_pixels)
+        self.action_cut.setEnabled(can_edit_pixels)
+        self.action_copy.setEnabled(has_active and has_pixels)
+        self.action_copy_merged.setEnabled(bool(document and len(document.layers) > 0))
+        self.action_paste.setEnabled(has_document)
         for action in (
             self.action_filter_brightness_contrast,
             self.action_filter_hue_saturation,
@@ -754,6 +793,9 @@ class MainWindow(QMainWindow):
                 target, enabled
             )
         )
+        view.color_picked.connect(self._on_color_picked)
+        view.color_shortcut.connect(self._on_color_shortcut)
+        view.paint_options_changed.connect(self.options_bar.refresh_paint_colors)
         self._stack.setCurrentWidget(self.tabs)
         self.tabs.setCurrentWidget(view)
         self._on_tab_changed(self.tabs.currentIndex())
@@ -787,6 +829,21 @@ class MainWindow(QMainWindow):
             view.set_brush_color(foreground)
             view.set_gradient_colors(foreground, background)
         self.options_bar.refresh_paint_colors()
+
+    def _on_color_shortcut(self, action: str) -> None:
+        if action == "swap":
+            self.color_manager.swap()
+        elif action == "reset":
+            self.color_manager.reset_defaults()
+
+    def _on_color_picked(
+        self, rgba: tuple[int, int, int, int], to_background: bool
+    ) -> None:
+        color = QColor(*rgba)
+        if to_background:
+            self.color_manager.set_background(color)
+        else:
+            self.color_manager.set_foreground(color)
 
     # ------------------------------------------------------------ tạo tài liệu
     def _on_new_document(self) -> None:
@@ -889,9 +946,22 @@ class MainWindow(QMainWindow):
             elif "WebP" in selected_filter:
                 extension = ".webp"
             target = target.with_suffix(extension)
+        quality = int(self.settings.export_quality)
+        if target.suffix.lower() in (".jpg", ".jpeg", ".webp"):
+            quality, accepted = QInputDialog.getInt(
+                self,
+                "Chất lượng ảnh",
+                f"Chất lượng {target.suffix.upper().lstrip('.')} (1–100):",
+                quality,
+                1,
+                100,
+            )
+            if not accepted:
+                return
+            self.settings.export_quality = quality
         try:
             composite = document.get_composite()
-            export_image(target, composite.array)
+            export_image(target, composite.array, quality=quality, dpi=document.dpi)
         except ExportError as exc:
             QMessageBox.critical(self, "Lỗi xuất ảnh", str(exc))
             return
@@ -975,6 +1045,114 @@ class MainWindow(QMainWindow):
             document.redo()
             self._update_action_states()
 
+    def _on_clear_selection(self) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        try:
+            changed = document.clear_selection_pixels()
+        except ValueError as exc:
+            self._show_transient_message(str(exc).replace("\n", " "))
+            return
+        if changed:
+            scope = "vùng chọn" if document.has_selection() else "toàn bộ layer"
+            self._show_transient_message(f"Đã xoá pixel trong {scope} (Ctrl+Z để hoàn tác).")
+        else:
+            self._show_transient_message("Vùng chọn đã trong suốt, không có gì để xoá.")
+
+    def _fill_with(self, color: tuple[int, int, int, int], label: str) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        try:
+            changed = document.fill_selection(color)
+        except ValueError as exc:
+            self._show_transient_message(str(exc).replace("\n", " "))
+            return
+        if changed:
+            scope = "vùng chọn" if document.has_selection() else "toàn bộ layer"
+            self._show_transient_message(
+                f"Đã tô {label} vào {scope} (Ctrl+Z để hoàn tác)."
+            )
+        else:
+            self._show_transient_message("Tô màu không tạo ra thay đổi.")
+
+    def _on_fill_foreground(self) -> None:
+        self._fill_with(self.color_manager.foreground_rgba(), "màu Foreground")
+
+    def _on_fill_background(self) -> None:
+        self._fill_with(self.color_manager.background_rgba(), "màu Background")
+
+    # ---------------------------------------------------------------- clipboard
+    def _copy_to_clipboard(self, merged: bool) -> bool:
+        document = self.current_document
+        if document is None:
+            return False
+        try:
+            result = document.copy_pixels(merged=merged)
+        except ValueError as exc:
+            self._show_transient_message(str(exc).replace("\n", " "))
+            return False
+        if result is None:
+            self._show_transient_message("Không có pixel nào trong vùng chọn để sao chép.")
+            return False
+        array, offset = result
+        self._clipboard_payload = (array, offset)
+        image = numpy_rgba_to_qimage(array).copy()
+        QApplication.clipboard().setImage(image)
+        return True
+
+    def _on_copy(self) -> None:
+        if self._copy_to_clipboard(merged=False):
+            array, _ = self._clipboard_payload
+            self._show_transient_message(
+                f"Đã sao chép {array.shape[1]} × {array.shape[0]} px."
+            )
+
+    def _on_copy_merged(self) -> None:
+        if self._copy_to_clipboard(merged=True):
+            array, _ = self._clipboard_payload
+            self._show_transient_message(
+                f"Đã sao chép ảnh ghép {array.shape[1]} × {array.shape[0]} px."
+            )
+
+    def _on_cut(self) -> None:
+        document = self.current_document
+        if document is None or not self._copy_to_clipboard(merged=False):
+            return
+        try:
+            document.clear_selection_pixels()
+        except ValueError as exc:
+            self._show_transient_message(str(exc).replace("\n", " "))
+            return
+        self._show_transient_message("Đã cắt vùng chọn sang clipboard (Ctrl+Z để hoàn tác).")
+
+    def _on_paste(self) -> None:
+        document = self.current_document
+        if document is None:
+            return
+        image = QApplication.clipboard().image()
+        if image.isNull():
+            self._show_transient_message("Clipboard không có ảnh để dán.")
+            return
+        array = qimage_to_rgba(image)
+        offset: tuple[int, int] | None = None
+        payload = self._clipboard_payload
+        if (
+            payload is not None
+            and payload[0].shape == array.shape
+            and np.array_equal(payload[0], array)
+        ):
+            offset = payload[1]
+        try:
+            layer = document.paste_pixels(array, offset)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Không thể dán", str(exc))
+            return
+        self._show_transient_message(
+            f"Đã dán thành layer '{layer.name}' ({layer.width} × {layer.height} px)."
+        )
+
     def _on_new_layer(self) -> None:
         document = self.current_document
         if document is None:
@@ -1042,6 +1220,18 @@ class MainWindow(QMainWindow):
         )
         if accepted and name.strip():
             document.rename_layer(layer, name)
+
+    def _on_toggle_lock_layer(self, checked: bool) -> None:
+        document = self.current_document
+        if document is None or document.active_layer is None:
+            return
+        layer = document.active_layer
+        document.set_layer_locked(layer, checked)
+        self._show_transient_message(
+            f"Đã khoá layer '{layer.name}'. Các thao tác vẽ/lọc/di chuyển bị chặn."
+            if checked
+            else f"Đã mở khoá layer '{layer.name}'."
+        )
 
     def _on_merge_down(self) -> None:
         document = self.current_document

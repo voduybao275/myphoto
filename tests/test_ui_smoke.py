@@ -1616,3 +1616,157 @@ def test_advanced_adjustment_dialogs_ui(qapp, tmp_path):
     window._remove_view(window.current_view)
     document.mark_clean()
     window.close()
+
+
+def test_edit_clipboard_lock_and_fill_actions(qapp, tmp_path):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtWidgets import QApplication
+
+    from core.selection import Selection
+
+    store = SettingsStore(tmp_path / "settings.json")
+    window = MainWindow(store)
+    document = Document(40, 30, name="Clipboard")
+    layer = document.add_layer(name="Background", color=(10, 20, 30, 255), record=False)
+    document.mark_clean()
+    window._add_document_tab(document)
+    qapp.processEvents()
+
+    assert window.action_copy.isEnabled()
+    assert window.action_paste.isEnabled()
+    assert window.action_clear.isEnabled()
+    assert not window.action_quick_mask.isEnabled()
+
+    document.set_selection(
+        Selection.from_rect(40, 30, QRectF(5, 5, 10, 8)), "Chọn vùng"
+    )
+    qapp.processEvents()
+    assert window.action_quick_mask.isEnabled()
+
+    window._on_copy()
+    clipboard_image = QApplication.clipboard().image()
+    assert (clipboard_image.width(), clipboard_image.height()) == (10, 8)
+
+    window._on_paste()
+    qapp.processEvents()
+    assert len(document.layers) == 2
+    pasted = document.active_layer
+    assert (pasted.width, pasted.height) == (10, 8)
+    assert (pasted.offset_x, pasted.offset_y) == (5, 5)
+    assert tuple(pasted.pixels[0, 0]) == (10, 20, 30, 255)
+
+    document.set_active_layer(layer.id)
+    window._on_cut()
+    qapp.processEvents()
+    assert layer.pixels[6, 6, 3] == 0
+    assert layer.pixels[0, 0, 3] == 255
+
+    window._on_fill_foreground()
+    qapp.processEvents()
+    assert layer.pixels[6, 6, 3] == 255
+
+    window.action_lock_layer.trigger()
+    qapp.processEvents()
+    assert layer.locked
+    assert window.action_lock_layer.isChecked()
+    assert not window.action_clear.isEnabled()
+    assert not window.action_cut.isEnabled()
+    assert window.layers_panel._lock_button.isChecked()
+    window.action_lock_layer.trigger()
+    qapp.processEvents()
+    assert not layer.locked
+    assert window.action_clear.isEnabled()
+
+    window.tabs.removeTab(0)
+    window.close()
+
+
+def test_eyedropper_tool_ui(qapp, tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    window = MainWindow(store)
+    window.resize(1280, 820)
+    window.show()
+    qapp.processEvents()
+
+    document = Document(80, 60, name="Eyedropper UI")
+    layer = document.add_layer(name="Background", color=(255, 255, 255, 255), record=False)
+    layer.pixels[:, 40:] = (10, 200, 30, 255)
+    document.mark_clean()
+    window._add_document_tab(document)
+    qapp.processEvents()
+
+    view = window.current_view
+    assert "eyedropper" in window.toolbox._actions
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_I, Qt.KeyboardModifier.NoModifier)
+    view.keyPressEvent(event)
+    assert view.tool_id == "eyedropper"
+    assert window.toolbox._actions["eyedropper"].isChecked()
+
+    def click(x: float, y: float, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        pos = view.image_to_widget(QPointF(x, y)).toPoint()
+        QTest.mousePress(view, Qt.MouseButton.LeftButton, modifiers, pos)
+        QTest.mouseRelease(view, Qt.MouseButton.LeftButton, modifiers, pos)
+        qapp.processEvents()
+
+    click(60.5, 30.5)
+    assert window.color_manager.foreground_rgba() == (10, 200, 30, 255)
+    click(10.5, 30.5, Qt.KeyboardModifier.AltModifier)
+    assert window.color_manager.background_rgba() == (255, 255, 255, 255)
+    assert window.color_manager.foreground_rgba() == (10, 200, 30, 255)
+
+    window.tabs.removeTab(0)
+    window.close()
+
+
+def test_color_and_brush_size_shortcuts(qapp, tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    window = MainWindow(store)
+    window.resize(1280, 820)
+    window.show()
+    qapp.processEvents()
+
+    document = Document(64, 48, name="Shortcuts")
+    document.add_layer(name="Background", color=(255, 255, 255, 255), record=False)
+    document.mark_clean()
+    window._add_document_tab(document)
+    qapp.processEvents()
+    view = window.current_view
+
+    def press(key, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, modifiers))
+        qapp.processEvents()
+
+    window.color_manager.set_foreground(QColor(10, 20, 30, 255))
+    window.color_manager.set_background(QColor(200, 210, 220, 255))
+    press(Qt.Key.Key_X)
+    assert window.color_manager.foreground_rgba() == (200, 210, 220, 255)
+    assert window.color_manager.background_rgba() == (10, 20, 30, 255)
+    press(Qt.Key.Key_D)
+    assert window.color_manager.foreground_rgba() == (255, 255, 255, 255)
+    assert window.color_manager.background_rgba() == (0, 0, 0, 255)
+
+    press(Qt.Key.Key_B)
+    assert view.tool_id == "brush"
+    view.set_brush_options(size=40)
+    window.options_bar.refresh_paint_colors()
+    press(Qt.Key.Key_BracketRight)
+    assert view.brush_options()["size"] == 50
+    assert window.options_bar._brush_size.value() == 50
+    press(Qt.Key.Key_BracketLeft)
+    press(Qt.Key.Key_BracketLeft)
+    assert view.brush_options()["size"] == 30
+    view.set_brush_options(size=5)
+    press(Qt.Key.Key_BracketLeft)
+    assert view.brush_options()["size"] == 4
+    view.set_brush_options(size=1)
+    press(Qt.Key.Key_BracketLeft)
+    assert view.brush_options()["size"] == 1
+
+    press(Qt.Key.Key_V)
+    press(Qt.Key.Key_BracketRight)
+    assert view.brush_options()["size"] == 1
+
+    assert window.action_delete_layer.shortcut().toString() == "Ctrl+Shift+Del"
+
+    window.tabs.removeTab(0)
+    window.close()

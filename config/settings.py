@@ -61,6 +61,7 @@ class AppSettings:
     last_directory: str = ""
     window_geometry: str = ""
     window_state: str = ""
+    export_quality: int = 92
 
     def resolved_last_directory(self) -> str:
         if self.last_directory and Path(self.last_directory).is_dir():
@@ -91,10 +92,13 @@ class SettingsStore:
                     setattr(self.data, key, [str(v) for v in raw[key] if isinstance(v, str)])
                 elif isinstance(current, str):
                     setattr(self.data, key, str(raw[key]))
+                elif isinstance(current, int):
+                    setattr(self.data, key, int(raw[key]))
                 else:
                     setattr(self.data, key, raw[key])
             if self.data.theme not in (THEME_DARK, THEME_LIGHT):
                 self.data.theme = THEME_DARK
+            self.data.export_quality = max(1, min(100, self.data.export_quality))
         except (OSError, ValueError, TypeError):
             logger.warning("Không đọc được settings, dùng cấu hình mặc định.", exc_info=True)
             self.data = AppSettings()
